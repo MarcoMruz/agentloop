@@ -29,6 +29,11 @@ func (v *Vault) Write(note SessionNote) error {
 	return os.WriteFile(filepath.Join(v.SessionsDir(), filename), []byte(renderSession(note)), 0644)
 }
 
+// WriteSession is an alias for Write, used by the session manager.
+func (v *Vault) WriteSession(note SessionNote) error {
+	return v.Write(note)
+}
+
 func (v *Vault) Read(sessionID string) (*SessionNote, error) {
 	entries, err := os.ReadDir(v.SessionsDir())
 	if err != nil {
@@ -58,6 +63,12 @@ func renderSession(note SessionNote) string {
 	sb.WriteString(fmt.Sprintf("id: %s\ntitle: %s\n", fm.ID, fm.Title))
 	sb.WriteString(fmt.Sprintf("created: %s\nupdated: %s\n", fm.Created.Format(time.RFC3339), fm.Updated.Format(time.RFC3339)))
 	sb.WriteString(fmt.Sprintf("status: %s\nprovider: %s\nmodel: %s\n", fm.Status, fm.Provider, fm.Model))
+	if fm.Source != "" {
+		sb.WriteString(fmt.Sprintf("source: %s\n", fm.Source))
+	}
+	if fm.UserID != "" {
+		sb.WriteString(fmt.Sprintf("user_id: %s\n", fm.UserID))
+	}
 	if len(fm.Tags) > 0 {
 		sb.WriteString("tags: [" + strings.Join(fm.Tags, ", ") + "]\n")
 	}

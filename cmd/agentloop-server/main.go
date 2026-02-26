@@ -1,0 +1,82 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/user/agentloop/internal/config"
+	"github.com/user/agentloop/internal/logging"
+	"github.com/user/agentloop/internal/memory"
+	"github.com/user/agentloop/internal/server"
+	"github.com/user/agentloop/internal/session"
+	"github.com/user/agentloop/internal/skills"
+	"github.com/user/agentloop/internal/vault"
+)
+
+var version = "dev"
+
+func main() {
+	cfg, err := config.Load(config.DefaultConfigPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
+		os.Exit(1)
+	}
+
+	logging.Init(cfg.Logging.Level, cfg.Logging.File)
+
+	// Initialize vault
+	v, err := vault.New(cfg.Vault.Path)
+	if err != nil {
+		slog.Error("vault init failed", "error", err)
+		os.Exit(1)
+	}
+
+	// Initialize memory engine
+	mem := memory.NewEngine(
+		cfg.Vault.Path,
+		cfg.Memory.MaxContextTokens,
+		cfg.Memory.CompactionStrategy,
+		cfg.Memory.ConversationRetainDays,
+	)
+
+	// Initialize skills registry
+	_ = skills.NewRegistry(cfg.Skills.SkillDirs)
+
+	// Initialize session manager
+	sm := session.NewManager(cfg, v, mem)
+
+	// Initialize server
+	handler := server.NewHandler(sm, mem)
+	srv := server.New(expandHome(cfg.Server.SocketPath), handler)
+	handler.SetServer(srv)
+
+	// Graceful shutdown
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	go func() {
+		<-ctx.Done()
+		slog.Info("shutting down...")
+		sm.StopAll()
+		srv.Stop()
+	}()
+
+	slog.Info("AgentLoop server starting", "version", version, "socket", cfg.Server.SocketPath)
+	if err := srv.Start(ctx); err != nil {
+		slog.Error("server error", "error", err)
+		os.Exit(1)
+	}
+}
+
+func expandHome(p string) string {
+	if len(p) > 1 && p[:2] == "~/" {
+		if h, err := os.UserHomeDir(); err == nil {
+			return h + p[1:]
+		}
+	}
+	return p
+}

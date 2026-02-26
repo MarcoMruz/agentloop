@@ -1,0 +1,204 @@
+package session
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"sync"
+
+	"github.com/user/agentloop/internal/agent"
+	"github.com/user/agentloop/internal/config"
+	"github.com/user/agentloop/internal/memory"
+	"github.com/user/agentloop/internal/vault"
+)
+
+type Broadcaster interface {
+	Broadcast(sessionId string, method string, params any)
+}
+
+type StartRequest struct {
+	UserID        string
+	Text          string
+	WorkDir       string
+	Source        string // "cli", "slack", etc.
+	MemoryContext string
+	Broadcaster   Broadcaster
+	HITLNotifier  Broadcaster // same interface, routes hitl_request events
+}
+
+type Manager struct {
+	cfg      config.SessionConfig
+	piCfg    config.PiConfig
+	secCfg   config.SecurityConfig
+	vault    *vault.Vault
+	memory   *memory.Engine
+	sessions map[string]*Session
+	userMap  map[string][]string // userId → active sessionIds
+	mu       sync.RWMutex
+}
+
+func NewManager(cfg *config.Config, v *vault.Vault, mem *memory.Engine) *Manager {
+	return &Manager{
+		cfg:      cfg.Sessions,
+		piCfg:    cfg.Pi,
+		secCfg:   cfg.Security,
+		vault:    v,
+		memory:   mem,
+		sessions: make(map[string]*Session),
+		userMap:  make(map[string][]string),
+	}
+}
+
+func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session, error) {
+	m.mu.Lock()
+
+	// Enforce limits
+	if len(m.sessions) >= m.cfg.MaxConcurrent {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("max concurrent sessions (%d) reached", m.cfg.MaxConcurrent)
+	}
+	userSessions := m.userMap[req.UserID]
+	if len(userSessions) >= m.cfg.MaxPerUser {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("max sessions per user (%d) reached — use task.abort first", m.cfg.MaxPerUser)
+	}
+
+	sess := NewSession(req.UserID, req.Text, req.WorkDir, req.Source)
+	m.sessions[sess.ID] = sess
+	m.userMap[req.UserID] = append(m.userMap[req.UserID], sess.ID)
+	m.mu.Unlock()
+
+	// Run agent in background
+	go func() {
+		defer m.cleanupSession(sess)
+
+		agentCore := agent.New(m.piCfg, m.secCfg, agent.Callbacks{
+			OnText: func(content string) {
+				req.Broadcaster.Broadcast(sess.ID, "event.text", map[string]any{
+					"sessionId": sess.ID, "content": content,
+				})
+			},
+			OnToolUse: func(name string, input map[string]any) {
+				req.Broadcaster.Broadcast(sess.ID, "event.tool_use", map[string]any{
+					"sessionId": sess.ID, "toolName": name, "input": input,
+				})
+			},
+			OnToolResult: func(name string, output string, success bool) {
+				req.Broadcaster.Broadcast(sess.ID, "event.tool_result", map[string]any{
+					"sessionId": sess.ID, "toolName": name, "output": truncate(output, 2000), "success": success,
+				})
+			},
+			OnHITLRequest: func(requestId string, toolName string, details string) {
+				sess.SetPendingHITL(requestId)
+				req.HITLNotifier.Broadcast(sess.ID, "event.hitl_request", map[string]any{
+					"sessionId": sess.ID, "requestId": requestId,
+					"toolName": toolName, "details": details,
+					"options": []string{"approve", "deny", "abort"},
+				})
+			},
+			OnDone: func(output string, stats agent.RunStats) {
+				req.Broadcaster.Broadcast(sess.ID, "event.done", map[string]any{
+					"sessionId": sess.ID, "output": output,
+					"stats": map[string]any{
+						"tokens": stats.Tokens, "toolCalls": stats.ToolCalls,
+						"duration": stats.Duration.String(),
+					},
+				})
+			},
+			OnError: func(msg string) {
+				req.Broadcaster.Broadcast(sess.ID, "event.error", map[string]any{
+					"sessionId": sess.ID, "message": msg,
+				})
+			},
+		})
+
+		result := agentCore.Run(ctx, req.MemoryContext, req.Text, sess)
+		sess.SetResult(result)
+
+		// Persist to vault
+		if err := m.vault.WriteSession(sess.ToVaultNote(result)); err != nil {
+			slog.Warn("vault write failed", "session", sess.ID, "error", err)
+		} else {
+			req.Broadcaster.Broadcast(sess.ID, "event.session_saved", map[string]any{
+				"sessionId": sess.ID,
+			})
+		}
+
+		// Update memory with this interaction
+		m.memory.RecordInteraction(req.UserID, req.Text, result.Output, result.ToolsUsed)
+	}()
+
+	return sess, nil
+}
+
+func (m *Manager) Steer(sessionId string, text string) error {
+	m.mu.RLock()
+	sess := m.sessions[sessionId]
+	m.mu.RUnlock()
+	if sess == nil { return fmt.Errorf("session %q not found", sessionId) }
+	return sess.Steer(text)
+}
+
+func (m *Manager) Abort(sessionId string) error {
+	m.mu.RLock()
+	sess := m.sessions[sessionId]
+	m.mu.RUnlock()
+	if sess == nil { return fmt.Errorf("session %q not found", sessionId) }
+	sess.Abort()
+	return nil
+}
+
+func (m *Manager) ResolveHITL(sessionId string, requestId string, decision string) error {
+	m.mu.RLock()
+	sess := m.sessions[sessionId]
+	m.mu.RUnlock()
+	if sess == nil { return fmt.Errorf("session %q not found", sessionId) }
+	return sess.ResolveHITL(requestId, decision)
+}
+
+func (m *Manager) List(userId string, status string) []SessionInfo {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []SessionInfo
+	for _, sess := range m.sessions {
+		if userId != "" && sess.UserID != userId { continue }
+		if status != "" && string(sess.State) != status { continue }
+		out = append(out, sess.Info())
+	}
+	return out
+}
+
+func (m *Manager) ActiveCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.sessions)
+}
+
+func (m *Manager) StopAll() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sess := range m.sessions {
+		sess.Abort()
+	}
+}
+
+func (m *Manager) cleanupSession(sess *Session) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.sessions, sess.ID)
+	ids := m.userMap[sess.UserID]
+	for i, id := range ids {
+		if id == sess.ID {
+			m.userMap[sess.UserID] = append(ids[:i], ids[i+1:]...)
+			break
+		}
+	}
+	if len(m.userMap[sess.UserID]) == 0 {
+		delete(m.userMap, sess.UserID)
+	}
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n { return s }
+	return s[:n] + "...[truncated]"
+}

@@ -1,6 +1,8 @@
+server:
+  socket_path: ~/.local/share/agentloop/agentloop.sock
+
 vault:
   path: ~/.local/share/agentloop/vault
-  auto_open: false
 
 pi:
   binary: pi
@@ -9,24 +11,37 @@ pi:
   extensions_dir: ""  # auto-detected
   extra_args: []
 
-agents:
-  max_iterations: 25
-  stuck_threshold: 3
+memory:
+  max_profile_entries: 50
+  conversation_retain_days: 30
+  compaction_threshold: 40
+  compaction_strategy: rolling  # rolling, facts, or topics
+  max_context_tokens: 3000
+  prompt_cache_ttl_minutes: 60
+
+sessions:
+  max_concurrent: 3
+  max_per_user: 1
+  timeout_minutes: 30
   max_token_budget: 200000
   max_tool_calls: 100
+  stuck_threshold: 3
 
 hitl:
-  confidence_threshold: 0.75
   always_pause_tools:
     - docker
-    - n8n_webhook
+    - git push
+    - rm -r
+    - curl
+    - wget
   timeout_seconds: 300
-  timeout_action: pause
+  timeout_action: deny
 
 security:
   allowed_paths:
     - ~/projects
     - ~/tmp
+    - ~/agentloop-sandbox
   blocked_env_prefixes:
     - ANTHROPIC_
     - OPENAI_
@@ -34,7 +49,6 @@ security:
     - N8N_WEBHOOK_
     - AWS_SECRET
     - GITHUB_TOKEN
-    - GH_TOKEN
     - SECRET_KEY
     - PRIVATE_KEY
   blocked_cidrs:
@@ -54,6 +68,13 @@ security:
     - compose
     - inspect
     - stats
+    - top
+    - exec
+    - run
+    - stop
+    - start
+    - restart
+    - rm
   docker_blocked_volume_paths:
     - /etc
     - /var
@@ -62,12 +83,9 @@ security:
     - /sys
     - /dev
 
-tools:
-  websearch:
-    provider: brave
-    max_results: 10
-  n8n:
-    webhooks: {}
+skills:
+  skill_dirs:
+    - ~/.local/share/agentloop/vault/skills
 
 logging:
   level: info

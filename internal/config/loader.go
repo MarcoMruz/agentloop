@@ -27,8 +27,12 @@ func Load(path string) (*Config, error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, err
 	}
+	cfg.Server.SocketPath = expandHome(cfg.Server.SocketPath)
 	cfg.Vault.Path = expandHome(cfg.Vault.Path)
 	cfg.Logging.File = expandHome(cfg.Logging.File)
+	for i, d := range cfg.Skills.SkillDirs {
+		cfg.Skills.SkillDirs[i] = expandHome(d)
+	}
 	return cfg, nil
 }
 

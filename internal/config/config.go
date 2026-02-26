@@ -1,79 +1,67 @@
 package config
 
 type Config struct {
-	Vault    VaultConfig    `mapstructure:"vault"`
+	Server   ServerConfig   `mapstructure:"server"`
 	Pi       PiConfig       `mapstructure:"pi"`
-	Agents   AgentConfig    `mapstructure:"agents"`
+	Vault    VaultConfig    `mapstructure:"vault"`
+	Memory   MemoryConfig   `mapstructure:"memory"`
+	Sessions SessionConfig  `mapstructure:"sessions"`
 	HITL     HITLConfig     `mapstructure:"hitl"`
 	Security SecurityConfig `mapstructure:"security"`
-	Tools    ToolsConfig    `mapstructure:"tools"`
+	Skills   SkillsConfig   `mapstructure:"skills"`
 	Logging  LoggingConfig  `mapstructure:"logging"`
 }
 
-// PiConfig controls how the pi subprocess is launched.
+type ServerConfig struct {
+	SocketPath string `mapstructure:"socket_path"`
+}
+
 type PiConfig struct {
-	// Binary is the path to the pi executable. Default: "pi" (from PATH).
-	Binary string `mapstructure:"binary"`
-	// Provider passed as --provider to pi. E.g. "anthropic", "openai", "ollama".
-	Provider string `mapstructure:"provider"`
-	// Model passed as --model to pi. E.g. "claude-sonnet-4-20250514", "gpt-4o".
-	Model string `mapstructure:"model"`
-	// ExtraArgs are additional CLI flags passed to pi.
-	ExtraArgs []string `mapstructure:"extra_args"`
-	// ExtensionsDir is the path to the AgentLoop extensions directory.
-	ExtensionsDir string `mapstructure:"extensions_dir"`
+	Binary        string   `mapstructure:"binary"`
+	Provider      string   `mapstructure:"provider"`
+	Model         string   `mapstructure:"model"`
+	ExtensionsDir string   `mapstructure:"extensions_dir"`
+	ExtraArgs     []string `mapstructure:"extra_args"`
 }
 
 type VaultConfig struct {
-	Path     string `mapstructure:"path"`
-	AutoOpen bool   `mapstructure:"auto_open"`
+	Path string `mapstructure:"path"`
 }
 
-type AgentConfig struct {
-	MaxIterations  int `mapstructure:"max_iterations"`
-	StuckThreshold int `mapstructure:"stuck_threshold"`
+type MemoryConfig struct {
+	MaxProfileEntries      int    `mapstructure:"max_profile_entries"`
+	ConversationRetainDays int    `mapstructure:"conversation_retain_days"`
+	CompactionThreshold    int    `mapstructure:"compaction_threshold"`
+	CompactionStrategy     string `mapstructure:"compaction_strategy"`
+	MaxContextTokens       int    `mapstructure:"max_context_tokens"`
+	PromptCacheTTLMinutes  int    `mapstructure:"prompt_cache_ttl_minutes"`
+}
+
+type SessionConfig struct {
+	MaxConcurrent  int `mapstructure:"max_concurrent"`
+	MaxPerUser     int `mapstructure:"max_per_user"`
+	TimeoutMinutes int `mapstructure:"timeout_minutes"`
 	MaxTokenBudget int `mapstructure:"max_token_budget"`
 	MaxToolCalls   int `mapstructure:"max_tool_calls"`
+	StuckThreshold int `mapstructure:"stuck_threshold"`
 }
 
 type HITLConfig struct {
-	ConfidenceThreshold float64  `mapstructure:"confidence_threshold"`
-	AlwaysPauseTools    []string `mapstructure:"always_pause_tools"`
-	TimeoutSeconds      int      `mapstructure:"timeout_seconds"`
-	TimeoutAction       string   `mapstructure:"timeout_action"`
+	AlwaysPauseTools []string `mapstructure:"always_pause_tools"`
+	TimeoutSeconds   int      `mapstructure:"timeout_seconds"`
+	TimeoutAction    string   `mapstructure:"timeout_action"`
 }
 
 type SecurityConfig struct {
-	// AllowedPaths: filesystem paths pi is allowed to access.
-	AllowedPaths []string `mapstructure:"allowed_paths"`
-	// BlockedEnvPrefixes: env var prefixes stripped from pi's environment.
-	BlockedEnvPrefixes []string `mapstructure:"blocked_env_prefixes"`
-	// BlockedCIDRs: IP ranges blocked for external API calls (SSRF protection).
-	BlockedCIDRs []string `mapstructure:"blocked_cidrs"`
-	// DockerAllowedSubcommands: allowed docker subcommands.
+	AllowedPaths             []string `mapstructure:"allowed_paths"`
+	BlockedEnvPrefixes       []string `mapstructure:"blocked_env_prefixes"`
+	BlockedCIDRs             []string `mapstructure:"blocked_cidrs"`
 	DockerAllowedSubcommands []string `mapstructure:"docker_allowed_subcommands"`
-	// DockerBlockedVolumePaths: volume mount prefixes blocked for docker.
 	DockerBlockedVolumePaths []string `mapstructure:"docker_blocked_volume_paths"`
 }
 
-type ToolsConfig struct {
-	WebSearch WebSearchConfig `mapstructure:"websearch"`
-	N8N       N8NConfig       `mapstructure:"n8n"`
-}
-
-type WebSearchConfig struct {
-	Provider   string `mapstructure:"provider"`
-	MaxResults int    `mapstructure:"max_results"`
-}
-
-type N8NConfig struct {
-	Webhooks map[string]N8NWebhook `mapstructure:"webhooks"`
-}
-
-type N8NWebhook struct {
-	URL          string `mapstructure:"url"`
-	AuthHeader   string `mapstructure:"auth_header"`
-	SecretEnvVar string `mapstructure:"secret_env_var"`
+type SkillsConfig struct {
+	SkillDirs []string `mapstructure:"skill_dirs"`
 }
 
 type LoggingConfig struct {
@@ -83,32 +71,42 @@ type LoggingConfig struct {
 
 func Defaults() *Config {
 	return &Config{
-		Vault: VaultConfig{Path: "~/.local/share/agentloop/vault"},
+		Server: ServerConfig{SocketPath: "~/.local/share/agentloop/agentloop.sock"},
 		Pi: PiConfig{
-			Binary:        "pi",
-			Provider:      "anthropic",
-			Model:         "claude-sonnet-4-20250514",
-			ExtensionsDir: "", // auto-detected relative to agentloop binary
+			Binary:   "pi",
+			Provider: "anthropic",
+			Model:    "claude-sonnet-4-20250514",
 		},
-		Agents: AgentConfig{
-			MaxIterations: 25, StuckThreshold: 3,
-			MaxTokenBudget: 200000, MaxToolCalls: 100,
+		Vault: VaultConfig{Path: "~/.local/share/agentloop/vault"},
+		Memory: MemoryConfig{
+			MaxProfileEntries:      50,
+			ConversationRetainDays: 30,
+			CompactionThreshold:    40,
+			CompactionStrategy:     "rolling",
+			MaxContextTokens:       3000,
+			PromptCacheTTLMinutes:  60,
+		},
+		Sessions: SessionConfig{
+			MaxConcurrent:  3,
+			MaxPerUser:     1,
+			TimeoutMinutes: 30,
+			MaxTokenBudget: 200000,
+			MaxToolCalls:   100,
+			StuckThreshold: 3,
 		},
 		HITL: HITLConfig{
-			ConfidenceThreshold: 0.75,
-			AlwaysPauseTools:    []string{"docker", "n8n_webhook"},
-			TimeoutSeconds:      300, TimeoutAction: "pause",
+			AlwaysPauseTools: []string{"docker", "git push", "rm -r", "curl", "wget"},
+			TimeoutSeconds:   300,
+			TimeoutAction:    "deny",
 		},
 		Security: SecurityConfig{
-			AllowedPaths:             []string{"~/projects", "~/tmp"},
-			BlockedEnvPrefixes:       []string{"ANTHROPIC_", "OPENAI_", "BRAVE_SEARCH_", "N8N_WEBHOOK_", "AWS_SECRET", "GITHUB_TOKEN", "GH_TOKEN", "SECRET_KEY", "PRIVATE_KEY"},
+			AllowedPaths:             []string{"~/projects", "~/tmp", "~/agentloop-sandbox"},
+			BlockedEnvPrefixes:       []string{"ANTHROPIC_", "OPENAI_", "BRAVE_SEARCH_", "N8N_WEBHOOK_", "AWS_SECRET", "GITHUB_TOKEN", "SECRET_KEY", "PRIVATE_KEY"},
 			BlockedCIDRs:             []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10"},
 			DockerAllowedSubcommands: []string{"ps", "logs", "images", "build", "compose", "inspect", "stats", "top", "exec", "run", "stop", "start", "restart", "rm"},
 			DockerBlockedVolumePaths: []string{"/etc", "/var", "/root", "/proc", "/sys", "/dev"},
 		},
-		Tools: ToolsConfig{
-			WebSearch: WebSearchConfig{Provider: "brave", MaxResults: 10},
-		},
+		Skills:  SkillsConfig{SkillDirs: []string{"~/.local/share/agentloop/vault/skills"}},
 		Logging: LoggingConfig{Level: "info"},
 	}
 }

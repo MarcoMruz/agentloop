@@ -10,7 +10,10 @@ type Vault struct{ RootPath string }
 func New(rootPath string) (*Vault, error) {
 	for _, d := range []string{
 		filepath.Join(rootPath, "sessions"),
-		filepath.Join(rootPath, "memory"),
+		filepath.Join(rootPath, "memory", "users"),
+		filepath.Join(rootPath, "memory", "contexts"),
+		filepath.Join(rootPath, "memory", "cache"),
+		filepath.Join(rootPath, "skills"),
 	} {
 		if err := os.MkdirAll(d, 0755); err != nil {
 			return nil, err

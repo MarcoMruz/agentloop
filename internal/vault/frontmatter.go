@@ -14,6 +14,8 @@ type SessionFrontmatter struct {
 	Status   string    `yaml:"status"`
 	Provider string    `yaml:"provider"`
 	Model    string    `yaml:"model"`
+	Source   string    `yaml:"source"`
+	UserID   string    `yaml:"user_id"`
 	Tags     []string  `yaml:"tags"`
 }
 

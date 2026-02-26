@@ -1,0 +1,74 @@
+vault:
+  path: ~/.local/share/agentloop/vault
+  auto_open: false
+
+pi:
+  binary: pi
+  provider: anthropic
+  model: claude-sonnet-4-20250514
+  extensions_dir: ""  # auto-detected
+  extra_args: []
+
+agents:
+  max_iterations: 25
+  stuck_threshold: 3
+  max_token_budget: 200000
+  max_tool_calls: 100
+
+hitl:
+  confidence_threshold: 0.75
+  always_pause_tools:
+    - docker
+    - n8n_webhook
+  timeout_seconds: 300
+  timeout_action: pause
+
+security:
+  allowed_paths:
+    - ~/projects
+    - ~/tmp
+  blocked_env_prefixes:
+    - ANTHROPIC_
+    - OPENAI_
+    - BRAVE_SEARCH_
+    - N8N_WEBHOOK_
+    - AWS_SECRET
+    - GITHUB_TOKEN
+    - GH_TOKEN
+    - SECRET_KEY
+    - PRIVATE_KEY
+  blocked_cidrs:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+    - "127.0.0.0/8"
+    - "169.254.0.0/16"
+    - "::1/128"
+    - "fc00::/7"
+    - "fe80::/10"
+  docker_allowed_subcommands:
+    - ps
+    - logs
+    - images
+    - build
+    - compose
+    - inspect
+    - stats
+  docker_blocked_volume_paths:
+    - /etc
+    - /var
+    - /root
+    - /proc
+    - /sys
+    - /dev
+
+tools:
+  websearch:
+    provider: brave
+    max_results: 10
+  n8n:
+    webhooks: {}
+
+logging:
+  level: info
+  file: ~/.config/agentloop/agentloop.log

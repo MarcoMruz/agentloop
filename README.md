@@ -1,50 +1,83 @@
 # AgentLoop
 
-An AI agent orchestrator built on top of [pi](https://shittycodingagent.ai) (`@mariozechner/pi-coding-agent`). AgentLoop wraps pi with production-ready guardrails: a human-in-the-loop approval gate, Obsidian-compatible session persistence, security policies that enforce path and network boundaries, and domain-specific tools for web search, Docker, and n8n webhooks.
+**AgentLoop is the single source of truth for all agent intelligence.** It wraps pi (`@mariozechner/pi-coding-agent` v0.54.0) as its underlying coding agent runtime and adds persistent memory, context management, prompt caching, compaction strategies, HITL gating, vault persistence, skill management, and multi-client support via Unix socket API.
 
-You run `agentloop run "some task"` and get a supervised, auditable AI agent that asks for your approval before it does anything risky, and saves a full session transcript when it's done.
+Two binaries:
+- **`agentloop-server`** — Long-running Go server (Unix socket). Manages sessions, memory, skills, HITL routing, vault persistence.
+- **`agentloop`** — Thin CLI client. Connects to the server socket, sends tasks, renders output.
+
+You run `agentloop "some task"` and get a supervised, auditable AI agent that asks for your approval before it does anything risky, saves a full session transcript when done, and learns from interaction patterns across sessions.
 
 ---
 
 ## What It Does
 
-- **Runs tasks through pi** — pi handles the actual agent loop, LLM calls, and coding tools (read, write, edit, bash, grep, find). AgentLoop sits above it, managing the process and extending it.
-- **Human-in-the-loop gate** — before docker commands, webhook calls, or any bash command matching risky patterns (`curl`, `git push`, `rm -r`, `sudo`), it stops and asks you to approve or abort.
-- **Session persistence** — every run is saved to `~/.local/share/agentloop/vault/sessions/` as a Markdown file with YAML frontmatter, compatible with Obsidian.
-- **Security policies** — a sanitized environment is passed to pi (no API keys, tokens, or secrets leak into the subprocess), and TypeScript extensions block dangerous command patterns, enforce filesystem boundaries, and validate Docker subcommands.
-- **Domain tools** — adds `web_search` (Brave Search API) and `n8n_webhook` tools to the agent's toolbox via pi extensions.
+- **Manages pi subprocesses** — the server spawns one pi instance per session, communicates via JSON-line RPC, manages lifecycle, enforces resource limits.
+- **Persistent memory engine** — learns from every interaction: conversation logs, user profiles, communication style, projects, repeated patterns. Uses compaction strategies to keep prompts efficient.
+- **Human-in-the-loop gate** — risky operations (docker, path writes, certain bash commands) require your approval before executing. All decisions are logged.
+- **Session persistence** — every run is saved to `~/.local/share/agentloop/vault/sessions/` as Obsidian-compatible Markdown with YAML frontmatter. Resumable.
+- **Security at two layers** — Go sandbox strips API keys/secrets from pi subprocess env. TypeScript extensions (security-policy.ts, docker-guard.ts) block dangerous patterns, enforce filesystem boundaries.
+- **Skill management** — on-demand instructions loaded from vault based on task content. Extensible without recompiling.
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────┐
-│  agentloop (Go binary)                               │
-│                                                      │
-│  CLI (Cobra)                                         │
-│   └── Orchestrator          ← task lifecycle         │
-│        ├── PiBridge         ← JSON-line RPC to pi    │
-│        ├── HITL Gate        ← terminal approval UI   │
-│        ├── Vault            ← session persistence     │
-│        └── Security         ← path/URL/docker checks │
-│                                                      │
-└──────────────────┬───────────────────────────────────┘
-                   │  JSON over stdin/stdout
-                   ▼
-┌──────────────────────────────────────────────────────┐
-│  pi (Node.js subprocess, --mode rpc)                 │
-│                                                      │
-│  LLM providers  +  coding tools  +  extensions:      │
-│  anthropic          read              hitl-gate.ts    │
-│  openai             write             security.ts     │
-│  ollama             edit              docker-guard.ts │
-│  google...          bash              web-search.ts   │
-│                     grep              n8n-webhook.ts  │
-└──────────────────────────────────────────────────────┘
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│  CLI Client  │  │ Slack Bridge │  │ Future: Web  │
+│  (Go binary) │  │ (Node.js)    │  │ UI, Mobile   │
+└──────┬───────┘  └──────┬───────┘  └──────┬───────┘
+       │                 │                 │
+       └────────┬────────┘────────┬────────┘
+                │  Unix Socket    │
+                │  (JSON-RPC)     │
+                ▼                 ▼
+┌────────────────────────────────────────────────────────────────┐
+│  AgentLoop Server (Go, long-running daemon)                    │
+│                                                                │
+│  ┌──────────────────────────────────────────────────────────┐ │
+│  │  Agent Core                                              │ │
+│  │  • Builds prompts (memory + task + skills)               │ │
+│  │  • Manages pi subprocess via RPC                         │ │
+│  │  • HITL gate (routes to client via socket)               │ │
+│  │  • Stuck detection, resource limits                      │ │
+│  │  • Context window management + compaction                │ │
+│  └──────┬─────────────────────────────────────────────────┬─┘ │
+│         │ stdin/stdout JSON RPC                           │    │
+│  ┌──────▼──────────────────────────────────────────────────▼──┐ │
+│  │  pi subprocess (per session)                              │ │
+│  │  • 15+ LLM providers (anthropic, openai, ollama, etc)     │ │
+│  │  • Coding tools: read, write, edit, bash, grep, find      │ │
+│  │  • TypeScript extensions: security, docker, hitl gates    │ │
+│  └─────────────────────────────────────────────────────────┬─┘ │
+│                                                             │   │
+│  ┌───────────────────────────────────────────────────────┬─▼──┐ │
+│  │  Memory Engine          │  Session Manager            │    │ │
+│  │  • User profiles        │  • Lifecycle (start/done)   │    │ │
+│  │  • Conversation logs    │  • Concurrency limits       │    │ │
+│  │  • Compaction strategy  │  • HITL routing             │    │ │
+│  │  • Prompt cache         │  • Abort/steer handling     │    │ │
+│  └────────────────────────┴─────────────────────────────────┘ │
+│                                                                │
+│  ┌────────────────────────────────────────────────────────┐   │
+│  │  Vault (~/.local/share/agentloop/vault/)               │   │
+│  │  ├── sessions/  (session transcripts)                  │   │
+│  │  ├── memory/    (profiles, conversations, cache)       │   │
+│  │  └── skills/    (on-demand skill files)                │   │
+│  └────────────────────────────────────────────────────────┘   │
+└────────────────────────────────────────────────────────────────┘
 ```
 
-Go communicates with pi via a JSON line protocol over stdin/stdout. Pi runs in `--mode rpc`, receives a `prompt` command, streams events back (`text`, `tool_use`, `tool_result`, `done`), and exposes an `extension_ui_request` event for HITL approval that routes through the Go process to the user's terminal.
+**Data flow for a task:**
+1. CLI client sends `task.start` via Unix socket
+2. Server creates a session, enforces limits, launches agent goroutine
+3. Agent builds prompt (memory prefix + skills + task) and starts pi subprocess
+4. Pi processes task, calls tools, sends events back
+5. Security extensions validate risky operations; HITL requests route back through socket to client
+6. Client shows HITL prompt to user, user approves/denies
+7. Server routes approval back to agent, pi continues
+8. On completion, server saves to vault and broadcasts `event.done`
 
 ---
 
@@ -74,17 +107,22 @@ cd agentloop
 # Install Go dependencies
 go mod download
 
-# Build the binary
+# Build both binaries
+go build -o agentloop-server ./cmd/agentloop-server
 go build -o agentloop ./cmd/agentloop
 
-# Verify it works
-./agentloop version
+# Start the server (runs in background)
+./agentloop-server &
+
+# Test the connection
+./agentloop "list files in the current directory"
 ```
 
 To install globally:
 ```bash
-go install ./cmd/agentloop
-# Now available as: agentloop
+go install ./cmd/agentloop-server ./cmd/agentloop
+# Now available as: agentloop-server (start in ~/.config/agentloop/start.sh, systemd, etc)
+#                   agentloop (use from anywhere)
 ```
 
 ---
@@ -136,36 +174,44 @@ hitl:
 
 See the full config reference in [`configs/agentloop.yaml`](configs/agentloop.yaml).
 
-### 3. Point extensions to your build (development only)
+### 3. Extensions (development only)
 
-By default, AgentLoop looks for extensions at `{binary-dir}/extensions/`. If you're running the binary from the project root, this works automatically. If running from elsewhere, set the path explicitly in config:
+By default, the server looks for extensions at `{agentloop-server-binary-dir}/extensions/`. If running from the project root, this works automatically. Otherwise, set the path explicitly in config:
 
 ```yaml
 pi:
   extensions_dir: /absolute/path/to/agentloop/extensions
 ```
 
+Extensions are TypeScript files (`.ts`) that hook into pi's extension system. They're loaded by the server and run inside each pi subprocess. See `extensions/` directory for examples.
+
 ---
 
 ## Usage
 
+First, ensure the server is running:
+```bash
+./agentloop-server &
+```
+
+Then use the CLI client:
 ```bash
 # Run a task
-./agentloop run "add unit tests to the auth package"
+./agentloop "add unit tests to the auth package"
 
-# Run with a specific provider
-./agentloop --config ~/.config/agentloop/agentloop.yaml run "refactor the database layer"
+# Run with explicit config path
+./agentloop "refactor the database layer" --config ~/.config/agentloop/agentloop.yaml
 
-# Show current resolved config
-./agentloop config show
+# Check server health
+./agentloop --health
 
-# Print version
-./agentloop version
+# List active sessions (future feature)
+./agentloop --sessions
 ```
 
 ### During a task
 
-The agent streams output to your terminal in real time. When it wants to run something risky, it pauses and shows:
+The agent streams output to your terminal in real time. It processes the task using pi, with your memory context and any loaded skills. When it wants to run something risky, it pauses and shows:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -196,32 +242,78 @@ This is valid Obsidian-compatible Markdown. Open your vault directory in Obsidia
 
 ## Project Structure — Start Here
 
-These are the files to read first when getting familiar with the codebase:
+Read these files first when getting familiar with the codebase:
 
 ```
 agentloop/
 │
-├── CLAUDE.md                        ← Full dev guidelines for AI agents and humans
-├── configs/agentloop.yaml           ← Annotated default config — read this first
-├── agents-md/AGENTS.md              ← Instructions the AI agent follows at runtime
+├── CLAUDE.md                              ← Complete dev guidelines (read this first!)
+├── configs/agentloop.yaml                 ← Annotated default config
+├── agents-md/AGENTS.md                    ← Instructions pi loads at runtime
+│
+├── cmd/
+│   ├── agentloop-server/main.go           ← Server binary entry point
+│   └── agentloop/main.go                  ← CLI client entry point
 │
 ├── internal/
-│   ├── orchestrator/orchestrator.go ← Task lifecycle: how everything connects
-│   ├── bridge/rpc.go                ← Core pi integration: subprocess + RPC protocol
-│   └── config/config.go             ← All config structs and defaults in one place
+│   ├── server/
+│   │   ├── server.go                      ← Unix socket listener, JSON-RPC dispatch
+│   │   ├── handler.go                     ← Request handlers (task, session, memory, hitl)
+│   │   └── client.go                      ← Connected client state
+│   │
+│   ├── session/
+│   │   ├── manager.go                     ← Session lifecycle, limits, routing
+│   │   └── session.go                     ← Session state machine
+│   │
+│   ├── agent/
+│   │   ├── core.go                        ← Agent core: builds prompts, manages pi, HITL
+│   │   └── prompt_builder.go              ← Assembles prompt: memory + skills + task
+│   │
+│   ├── bridge/
+│   │   ├── rpc.go                         ← ⭐ Core: pi subprocess RPC client
+│   │   ├── events.go                      ← Pi event/command types
+│   │   └── rpc_test.go                    ← Tests for env sanitization, RPC protocol
+│   │
+│   ├── memory/
+│   │   ├── engine.go                      ← Memory engine: orchestrates all memory ops
+│   │   ├── profile.go                     ← Per-user profile (facts, patterns, prefs)
+│   │   ├── conversation.go                ← Conversation logs (per-user, per-day)
+│   │   ├── compaction.go                  ← Compaction strategies
+│   │   └── cache.go                       ← Prompt cache
+│   │
+│   ├── skills/
+│   │   └── registry.go                    ← Skill registry: loads from vault
+│   │
+│   ├── vault/
+│   │   ├── vault.go                       ← Vault directory management
+│   │   ├── session.go                     ← Read/write session markdown
+│   │   └── frontmatter.go                 ← YAML frontmatter parser
+│   │
+│   ├── security/
+│   │   ├── policy.go                      ← Path, URL, docker validation
+│   │   └── policy_test.go                 ← Security test cases
+│   │
+│   ├── config/
+│   │   ├── config.go                      ← Full config struct + defaults
+│   │   └── loader.go                      ← Viper loader
+│   │
+│   └── ... (hitl, errors, logging packages)
 │
 └── extensions/
-    ├── hitl-gate.ts                 ← Where HITL decisions are triggered
-    └── security-policy.ts           ← What commands/paths are blocked and why
+    ├── security-policy.ts                 ← Bash command validation, path enforcement
+    └── docker-guard.ts                    ← Docker subcommand + volume validation
 ```
 
 **Recommended reading order:**
 
-1. `configs/agentloop.yaml` — understand what can be configured
-2. `internal/config/config.go` — understand the config structs and defaults
-3. `internal/orchestrator/orchestrator.go` — understand `RunTask()`, the main execution path
-4. `internal/bridge/rpc.go` — understand how Go talks to pi
-5. `extensions/hitl-gate.ts` + `extensions/security-policy.ts` — understand the safety layer
+1. `CLAUDE.md` — full architecture guide (15 min)
+2. `configs/agentloop.yaml` — what can be configured
+3. `internal/config/config.go` — config structs and defaults
+4. `internal/server/handler.go` — how JSON-RPC requests are handled
+5. `internal/agent/core.go` — agent lifecycle: prompt building, pi management, event loop
+6. `internal/bridge/rpc.go` — ⭐ how Go talks to pi subprocess (critical file)
+7. `extensions/security-policy.ts` + `docker-guard.ts` — safety layer
+8. `internal/memory/engine.go` — how memory context is built and cached
 
 ---
 
@@ -277,123 +369,136 @@ Run only the package you changed during development, then run `go test ./...` be
 To test the full system (requires a configured LLM provider and pi v0.54.0):
 
 ```bash
-# Build first
+# Build both binaries
+go build -o agentloop-server ./cmd/agentloop-server
 go build -o agentloop ./cmd/agentloop
 
+# Start the server
+./agentloop-server &
+SERVER_PID=$!
+
 # Simple task that exercises the full path
-./agentloop run "list the files in the current directory and tell me what you see"
+./agentloop "list the files in the current directory and tell me what you see"
 
 # After it completes, verify the session was saved
 ls ~/.local/share/agentloop/vault/sessions/
 
-# Check the config show works correctly
-./agentloop config show
+# Verify vault structure
+ls -la ~/.local/share/agentloop/vault/
+
+# Stop the server
+kill $SERVER_PID
 ```
 
-If you've added a new extension, confirm it gets loaded:
-- Set `logging.level: debug` in your config
-- Run a task — you should see pi debug output for each extension load
+If you've added a new extension:
+- Ensure the extension file is in `extensions/` and has `.ts` or `.js` extension
+- Set `logging.level: debug` in `~/.config/agentloop/agentloop.yaml`
+- Run the server and a task — you should see extension load events in logs
 - Trigger the extension's condition and verify the expected behavior
 
 ---
 
 ## Configuration Reference
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `vault.path` | `~/.local/share/agentloop/vault` | Where session notes are stored |
-| `pi.binary` | `pi` | Path to the pi executable |
-| `pi.provider` | `anthropic` | LLM provider (anthropic, openai, ollama, google...) |
-| `pi.model` | `claude-sonnet-4-20250514` | Model to use |
-| `pi.extensions_dir` | auto-detected | Path to `extensions/` directory |
-| `agents.max_iterations` | `25` | Max agent reasoning iterations |
-| `agents.max_token_budget` | `200000` | Max tokens per session |
-| `hitl.always_pause_tools` | `[docker, n8n_webhook]` | Tools that always require approval |
-| `hitl.timeout_seconds` | `300` | Seconds before auto-abort on HITL prompt |
-| `security.allowed_paths` | `[~/projects, ~/tmp]` | Paths the agent may read/write |
-| `security.blocked_cidrs` | private ranges | IP ranges blocked for outbound requests |
-| `logging.level` | `info` | debug, info, warn, error |
-| `logging.file` | (stderr only) | Optional log file path |
+For full config documentation, see `configs/agentloop.yaml`. Below are the main sections:
+
+| Section | Key | Default | Description |
+|---------|-----|---------|-------------|
+| `server` | `socket_path` | `~/.local/share/agentloop/agentloop.sock` | Unix socket path for client connections |
+| `pi` | `binary` | `pi` | Path to pi executable |
+| | `provider` | `anthropic` | LLM provider (anthropic, openai, ollama, google, etc.) |
+| | `model` | `claude-sonnet-4-20250514` | Model identifier |
+| | `extensions_dir` | auto-detected | Path to TypeScript extensions directory |
+| | `extra_args` | `[]` | Extra arguments passed to pi |
+| `vault` | `path` | `~/.local/share/agentloop/vault` | Root vault directory (sessions, memory, skills) |
+| `memory` | `profile_max_entries` | `50` | Max facts per user profile |
+| | `conversation_retention_days` | `30` | Keep conversation logs for N days |
+| | `cache_ttl_minutes` | `60` | Prompt cache validity period |
+| | `compaction_strategy` | `rolling` | rolling, facts, or topics |
+| `sessions` | `max_concurrent` | `5` | Max simultaneous sessions |
+| | `max_per_user` | `3` | Max concurrent sessions per user |
+| | `timeout_minutes` | `60` | Session timeout |
+| | `token_budget` | `200000` | Max tokens per session |
+| | `max_tool_calls` | `50` | Max tools per session |
+| `hitl` | `always_pause_tools` | `[docker]` | Tools requiring manual approval |
+| | `timeout_seconds` | `300` | Auto-abort HITL wait after N seconds |
+| `security` | `allowed_paths` | `[]` | Whitelisted write paths (empty = no restriction) |
+| | `blocked_env_prefixes` | `[AWS_,GITHUB_,OPENAI_]` | Env var prefixes stripped from pi |
+| | `blocked_cidrs` | private ranges | IP ranges blocked for outbound |
+| `skills` | `directories` | `[vault/skills]` | Directories to scan for skill files |
+| `logging` | `level` | `info` | debug, info, warn, error |
+| | `file` | (stderr only) | Optional log file path |
 
 ---
 
-## Optional Tools
+## Development
 
-### Web Search
+### Adding a new JSON-RPC server method
 
-Add a `BRAVE_SEARCH_API_KEY` to your environment. The `web_search` tool becomes available to the agent automatically — no config change needed.
+1. Add the case to the switch statement in `internal/server/handler.go`
+2. Parse params, call the appropriate manager or engine method
+3. Return result or error as JSON
+4. If it creates events, use `Broadcaster.Broadcast()` to push to subscribed clients
 
-```bash
-export BRAVE_SEARCH_API_KEY=BSA...
-```
+### Adding a new config field
 
-Get a free API key at [brave.com/search/api](https://brave.com/search/api/).
-
-### n8n Webhooks
-
-Configure named webhooks in your config:
-
-```yaml
-tools:
-  n8n:
-    webhooks:
-      deploy:
-        url: https://your-n8n.example.com/webhook/deploy
-        auth_header: X-Webhook-Secret
-        secret_env_var: N8N_DEPLOY_SECRET
-```
-
-Set the secret in your environment:
-```bash
-export N8N_DEPLOY_SECRET=your-secret
-```
-
-The agent can then trigger it with the `n8n_webhook` tool using the name `deploy`.
-
----
-
-## Contributing
-
-### Adding a new CLI command
-
-1. Create `internal/cli/mycommand.go`
-2. Define a `cobra.Command` and its `RunE` handler
-3. Register it in `internal/cli/root.go`: `rootCmd.AddCommand(myCmd)`
-4. Access config via the package-level `cfg` variable
+1. Add field to appropriate struct in `internal/config/config.go` with `mapstructure` tag
+2. Set default in `Defaults()`
+3. Add to `configs/agentloop.yaml` with documentation
+4. If it's a path, call `expandHome()` in `Load()`
 
 ### Adding a new pi extension (TypeScript)
 
 1. Create `extensions/my-extension.ts`
-2. Use the `ExtensionFactory` pattern — see existing extensions for reference
+2. Use pi's `ExtensionFactory` pattern — see existing extensions for examples
 3. Export default the factory function
-4. It auto-loads on the next `agentloop run` — no Go changes needed
-5. For config, read from `process.env.AGENTLOOP_*` env vars
+4. Auto-loaded on server startup (all `.ts` and `.js` files in extensions dir)
+5. For env config, read `process.env.AGENTLOOP_*` variables
 
-### Adding a config field
+### Adding a new skill
 
-1. Add the field to the right struct in `internal/config/config.go` with a `mapstructure` tag
-2. Set its default in `Defaults()`
-3. Document it in `configs/agentloop.yaml`
+1. Create directory: `~/.local/share/agentloop/vault/skills/my-skill/`
+2. Create `SKILL.md` with YAML frontmatter:
+   ```yaml
+   ---
+   name: My Skill Name
+   description: What this skill does
+   triggers:
+     - keyword1
+     - keyword2
+   ---
+   ```
+3. Add markdown instructions below the frontmatter
+4. Skills are auto-loaded by `memory/engine.go` — no server restart needed
 
 ### Security changes
 
-Security policy files require explicit maintainer approval before merging. These are:
-- `internal/security/policy.go`
-- `internal/bridge/rpc.go` (`buildSafeEnv` function)
-- `extensions/security-policy.ts`, `hitl-gate.ts`, `docker-guard.ts`
+**CRITICAL:** Security policy changes require explicit approval before merging. These files are protected:
+- `internal/security/policy.go` — path/URL/docker validators
+- `internal/bridge/rpc.go` — `buildSafeEnv()` function
+- `extensions/security-policy.ts` — bash command blocking
+- `extensions/docker-guard.ts` — docker restrictions
 
-See `CLAUDE.md` for the full development reference.
+Run security tests before any PR:
+```bash
+go test ./internal/security/... -v
+go test ./internal/bridge/... -v
+```
+
+See `CLAUDE.md` for the complete development guide.
 
 ---
 
-## Phase 2 (Not Yet Implemented)
+## Roadmap
 
-These features are stubbed and tracked for a future release:
+Planned features for future releases:
 
-- **Multi-step plan decomposition** (`internal/orchestrator/plan.go`) — break complex tasks into sub-plans before execution
-- **Multi-agent spawning** (`internal/orchestrator/spawn.go`) — run multiple pi instances in parallel on decomposed tasks
-- **Session listing** (`agentloop session list`) — browse saved vault sessions from the CLI
-- **Vault resume** — reload a previous session's state into pi to continue interrupted work
+- **Web UI** — dashboard to view active sessions, memory profiles, vault browser
+- **Slack integration** — submit tasks via Slack, receive HITL approvals, session summaries in Slack
+- **Session resume** — load a previous session's state and continue interrupted work
+- **Multi-agent coordination** — orchestrate multiple agents working on decomposed tasks
+- **Advanced memory strategies** — LLM-powered summarization, topic clustering, automated fact extraction
+- **Skill marketplace** — share and discover community skills via registries
 
 ---
 

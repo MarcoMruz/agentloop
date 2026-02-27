@@ -1,7 +1,10 @@
 package memory
 
 import (
+	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 )
 
 type Engine struct {
@@ -94,6 +97,107 @@ func (e *Engine) UpdateUserFact(userId string, key string, value string) error {
 func (e *Engine) ForgetUserFact(userId string, key string) error {
 	e.cache.Delete("ctx:" + userId)
 	return e.profiles.DeleteFact(userId, key)
+}
+
+// GetContextForUserWithTask builds a task-aware memory context.
+// Instead of dumping all history, it scores each indexed entry against the task
+// keywords and returns only the most relevant summaries. Falls back to the 5 most
+// recent entries when no keyword overlap is found.
+// Works across all domains: coding, email, calendar, reports, scheduling, etc.
+func (e *Engine) GetContextForUserWithTask(userId string, task string) (string, error) {
+	// Derive a short stable cache key from the task
+	taskKey := taskCacheKey(task)
+	cacheKey := "ctx:" + userId + ":" + taskKey
+	if cached := e.cache.Get(cacheKey); cached != "" {
+		return cached, nil
+	}
+
+	profile, err := e.profiles.Load(userId)
+	if err != nil {
+		slog.Debug("no profile for user", "userId", userId)
+		profile = DefaultProfile(userId)
+	}
+	profileText := profile.Render()
+
+	// Load indexed entries (lightweight JSON, not full markdown)
+	indexed, err := e.conversations.GetRecentIndexed(userId, 60)
+	if err != nil || len(indexed) == 0 {
+		// No index yet — fall back to existing context builder
+		return e.GetContextForUser(userId)
+	}
+
+	// Score entries against task
+	taskKw := extractKeywords(task)
+	taskTopics := extractTopics(task)
+
+	type scored struct {
+		entry IndexEntry
+		score float64
+	}
+	var candidates []scored
+	for _, entry := range indexed {
+		s := scoreEntry(taskKw, taskTopics, entry)
+		candidates = append(candidates, scored{entry, s})
+	}
+
+	// Sort descending by score
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].score > candidates[j].score
+	})
+
+	const maxRelevant = 8
+	const maxFallback = 5
+
+	var historyLines []string
+	hasMatches := len(candidates) > 0 && candidates[0].score > 0
+
+	if hasMatches {
+		count := 0
+		for _, c := range candidates {
+			if c.score == 0 || count >= maxRelevant {
+				break
+			}
+			historyLines = append(historyLines, fmt.Sprintf("- [%s %s] %s", c.entry.Timestamp[:5], c.entry.Role, c.entry.Summary))
+			count++
+		}
+	} else {
+		// No keyword match — use the most recent entries
+		for i, c := range candidates {
+			if i >= maxFallback {
+				break
+			}
+			historyLines = append(historyLines, fmt.Sprintf("- [%s %s] %s", c.entry.Timestamp[:5], c.entry.Role, c.entry.Summary))
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(profileText)
+
+	if len(historyLines) > 0 {
+		if hasMatches {
+			sb.WriteString(fmt.Sprintf("\n\n## Relevant context (%d matches)\n", len(historyLines)))
+		} else {
+			sb.WriteString("\n\n## Recent context\n")
+		}
+		sb.WriteString(strings.Join(historyLines, "\n"))
+	}
+
+	ctx := sb.String()
+	e.cache.Set(cacheKey, ctx, 5*60)
+	return ctx, nil
+}
+
+// taskCacheKey derives a short stable key from a task string.
+// Same task text (including steered tasks) reuses the same cache entry.
+func taskCacheKey(task string) string {
+	normalized := strings.ToLower(strings.TrimSpace(task))
+	normalized = strings.Join(strings.Fields(normalized), " ")
+	if len(normalized) > 32 {
+		normalized = normalized[:32]
+	}
+	// Replace characters unsafe for map keys
+	normalized = strings.NewReplacer("/", "-", ":", "-", " ", "_").Replace(normalized)
+	return normalized
 }
 
 func estimateTokens(s string) int { return len(s) / 4 }

@@ -27,8 +27,9 @@ func NewPromptBuilder(mem *memory.Engine, sk *skills.Registry) *PromptBuilder {
 func (pb *PromptBuilder) Build(userId string, task string, skillNames []string) (string, error) {
 	var sections []string
 
-	// Section 1: Memory context (stable prefix for caching)
-	memCtx, err := pb.mem.GetContextForUser(userId)
+	// Section 1: Memory context — task-aware relevance filtering keeps token cost low.
+	// Falls back to full context when no index exists yet.
+	memCtx, err := pb.mem.GetContextForUserWithTask(userId, task)
 	if err == nil && memCtx != "" {
 		sections = append(sections, fmt.Sprintf("<memory>\n%s\n</memory>", memCtx))
 	}

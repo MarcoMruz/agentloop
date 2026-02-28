@@ -89,7 +89,11 @@ func main() {
 			d, _ := json.Marshal(resp)
 			fmt.Fprintf(conn, "%s\n", d)
 		case "event.done":
-			fmt.Printf("\n\nDone (%s)\n", params["stats"])
+			stats, _ := params["stats"].(map[string]any)
+			tokens := int(stats["tokens"].(float64))
+			toolCalls := int(stats["toolCalls"].(float64))
+			duration, _ := stats["duration"].(string)
+			fmt.Printf("\n\nDone (tokens: %d, tool calls: %d, duration: %s)\n", tokens, toolCalls, duration)
 			return
 		case "event.error":
 			fmt.Printf("\nError: %s\n", params["message"])

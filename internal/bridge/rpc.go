@@ -123,9 +123,14 @@ func (b *PiBridge) Start(ctx context.Context, workDir string) error {
 
 // SendCommand sends a JSON command to pi via stdin.
 func (b *PiBridge) SendCommand(cmd RPCCommand) error {
+	return b.sendJSON(cmd)
+}
+
+// sendJSON marshals v and writes it as a JSON line to pi's stdin.
+func (b *PiBridge) sendJSON(v any) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	data, err := json.Marshal(cmd)
+	data, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
@@ -133,19 +138,19 @@ func (b *PiBridge) SendCommand(cmd RPCCommand) error {
 	return err
 }
 
-// Prompt sends a task to pi and blocks until completion.
+// Prompt sends a task to pi. Returns immediately; events stream asynchronously.
 func (b *PiBridge) Prompt(ctx context.Context, id string, text string) error {
-	return b.SendCommand(RPCCommand{Type: "prompt", ID: id, Text: text})
+	return b.SendCommand(RPCCommand{Type: "prompt", ID: id, Message: text})
 }
 
 // Steer interrupts current work with a new direction.
 func (b *PiBridge) Steer(ctx context.Context, id string, text string) error {
-	return b.SendCommand(RPCCommand{Type: "steer", ID: id, Text: text})
+	return b.SendCommand(RPCCommand{Type: "steer", Message: text, StreamingBehavior: "steer"})
 }
 
 // Abort stops current work.
 func (b *PiBridge) Abort(id string) error {
-	return b.SendCommand(RPCCommand{Type: "abort", ID: id})
+	return b.SendCommand(RPCCommand{Type: "abort"})
 }
 
 // Wait blocks until the pi process exits.
@@ -186,6 +191,7 @@ func (b *PiBridge) readEvents() {
 			slog.Warn("failed to parse pi event", "line", line[:min(len(line), 200)], "error", err)
 			continue
 		}
+		slog.Debug("pi event received", "type", event.Type, "id", event.ID)
 
 		// Handle HITL extension UI requests
 		if event.Type == "extension_ui_request" && b.onHITL != nil {
@@ -193,7 +199,7 @@ func (b *PiBridge) readEvents() {
 			if err != nil {
 				slog.Warn("HITL handler error", "error", err)
 			}
-			// Send response back to pi
+			// Send response directly as ExtensionUIResponse (not wrapped in RPCCommand)
 			resp := ExtensionUIResponse{
 				Type: "extension_ui_response",
 				ID:   event.ID,
@@ -208,7 +214,7 @@ func (b *PiBridge) readEvents() {
 					resp.Cancelled = true
 				}
 			}
-			b.SendCommand(RPCCommand{Type: "extension_ui_response", ID: event.ID, Text: toJSON(resp)})
+			b.sendJSON(resp)
 			continue
 		}
 
@@ -224,7 +230,7 @@ func (b *PiBridge) readEvents() {
 func (b *PiBridge) readStderr() {
 	scanner := bufio.NewScanner(b.stderr)
 	for scanner.Scan() {
-		slog.Debug("pi stderr", "line", scanner.Text())
+		slog.Warn("pi stderr", "line", scanner.Text())
 	}
 }
 
@@ -249,11 +255,6 @@ func buildSafeEnv(blockedPrefixes []string) []string {
 		}
 	}
 	return safe
-}
-
-func toJSON(v any) string {
-	b, _ := json.Marshal(v)
-	return string(b)
 }
 
 func min(a, b int) int {

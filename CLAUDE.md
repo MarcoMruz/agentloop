@@ -229,8 +229,8 @@ agentloop/
 ## Prerequisites
 
 - **Go** >= 1.23.0
-- **pi** v0.54.0 installed globally: `npm install -g @mariozechner/pi-coding-agent`
-- Verify: `pi --version` should output `0.54.0`
+- **pi** v0.54.0+ installed globally: `npm install -g @mariozechner/pi-coding-agent`
+- Verify with: `pi --version`
 
 ---
 
@@ -250,8 +250,8 @@ go build -ldflags="-X main.version=v1.0.0" -o agentloop-server ./cmd/agentloop-s
 # Run a task via CLI
 ./agentloop "describe the task here"
 
-# Health check via socat
-echo '{"jsonrpc":"2.0","id":1,"method":"health.check","params":{}}' | socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
+# Health check via nc (netcat) — socat also works
+echo '{"jsonrpc":"2.0","id":1,"method":"health.check","params":{}}' | nc -U ~/.local/share/agentloop/agentloop.sock
 
 # Tidy modules after adding dependencies
 go mod tidy
@@ -279,7 +279,7 @@ go test ./internal/bridge/... -v
 | Test | File | Verifies |
 |------|------|----------|
 | `TestBuildSafeEnv` | `internal/bridge/rpc_test.go` | API keys stripped from pi subprocess env |
-| `TestRPCCommandSerialization` | `internal/bridge/rpc_test.go` | JSON protocol correctness |
+| `TestRPCCommandSerialization` | `internal/bridge/rpc_test.go` | JSON protocol correctness — verifies `"message"` field used, not `"text"` |
 | `TestExtensionUIResponseSerialization` | `internal/bridge/rpc_test.go` | HITL response format |
 | `TestValidatePathTraversal` | `internal/security/policy_test.go` | `../../etc/passwd` blocked |
 | `TestValidatePathAllowed` | `internal/security/policy_test.go` | Valid paths permitted |
@@ -391,6 +391,14 @@ JSON-RPC 2.0 server over Unix domain socket. Manages client connections and disp
 
 **`Core`** — wraps PiBridge into a `Run()` method. Builds prompts with memory prefix, manages event loop (done/abort/steer/ctx), collects stats.
 
+**`Run()` event loop** selects on four channels:
+- `doneCh` — closed by `agent_end` event from pi (or on streaming error/retry failure)
+- `b.Done()` — closed when pi process exits; handles crashes where `agent_end` is never emitted
+- `sess.AbortCh()` — user abort signal
+- `ctx.Done()` — server shutdown
+
+Early failures (`b.Start()` or `b.Prompt()` errors) call `OnError` before returning, so the client always receives an `event.error` notification instead of hanging.
+
 **`PromptBuilder`** — assembles memory context + skills + task into a single prompt. Optimized for Anthropic prompt caching (stable prefix first, dynamic content last).
 
 **`Callbacks`** — event routing struct: OnText, OnToolUse, OnToolResult, OnHITLRequest, OnDone, OnError.
@@ -408,12 +416,37 @@ This is the most critical package. It manages the pi subprocess and all communic
 New(piCfg, secCfg) → SetEventHandler() → SetHITLHandler() → Start(ctx, workDir) → Prompt() → <-Done() → Stop()
 ```
 
+**Pi RPC protocol (stdin → pi):**
+
+| Command | JSON sent | Description |
+|---------|-----------|-------------|
+| Prompt | `{"type":"prompt","id":"task","message":"..."}` | Send task to agent |
+| Steer | `{"type":"steer","message":"...","streamingBehavior":"steer"}` | Interrupt mid-run |
+| Abort | `{"type":"abort"}` | Stop current run |
+
+Note: the prompt field is `"message"`, **not** `"text"`. Using `"text"` silently fails — pi ignores it.
+
+**Pi RPC protocol (pi → stdout events):**
+
+| Pi event type | Mapped to | Description |
+|---------------|-----------|-------------|
+| `message_update` + `assistantMessageEvent.type == "text_delta"` | `OnText(delta)` | Streaming text chunk |
+| `tool_execution_start` | `OnToolUse(toolName, args)` | Tool invocation started |
+| `tool_execution_end` | `OnToolResult(toolName, output, success)` | Tool finished |
+| `agent_end` | `closeDone()` → `OnDone` | Agent completed (success or failure) |
+| `auto_retry_end` with `success==false` | `OnError` + `closeDone()` | Failed after all retries |
+| `message_update` + `assistantMessageEvent.type == "error"` | `OnError` + `closeDone()` | Streaming error |
+| `extension_ui_request` | HITL handler | Permission gate request |
+
+**Extension UI responses** are sent as raw `ExtensionUIResponse` JSON via `sendJSON()`, not wrapped in `RPCCommand`.
+
 **Important implementation details:**
 - Scanner buffer is 10MB max line (for large tool outputs)
 - `buildSafeEnv()` strips env vars matching `BlockedEnvPrefixes` before subprocess creation
 - Extensions auto-loaded from `ExtensionsDir` (all `.ts`/`.js` files)
 - If `ExtensionsDir` is empty, auto-detects `{binary-dir}/extensions/`
-- `SendCommand()` is mutex-protected for thread safety
+- `sendJSON()` is mutex-protected; `SendCommand()` delegates to it
+- `core.Run()` listens on both `doneCh` (from `agent_end` event) and `b.Done()` (pi process exit) — the latter handles pi crashes where no `agent_end` is emitted
 
 ### `internal/memory` — Memory Engine
 
@@ -640,7 +673,10 @@ The bridge (`internal/bridge/rpc.go`) is the most sensitive Go file. When modify
 - `readEvents()` processes all pi stdout — changes here affect everything
 - `buildSafeEnv()` is a security boundary — changes require approval
 - `Start()` constructs the pi command — changes affect how pi is launched
+- `sendJSON()` is the single write path to pi's stdin — mutex-protected; all sends go through it
+- Event type mapping lives in `core.go`'s `SetEventHandler` switch, not in the bridge itself
 - Always run bridge tests: `go test ./internal/bridge/... -v`
+- To verify the pi protocol, check `$(npm root -g)/@mariozechner/pi-coding-agent/docs/rpc.md`
 
 ---
 
@@ -708,11 +744,14 @@ if errors.IsUserAbort(err) { /* clean exit */ }
 2. **`min()` is defined locally** in `bridge/rpc.go` and `memory/profile.go` (Go <1.21 compat). If Go version bumps to 1.21+, the built-in `min` will conflict — remove the local ones.
 3. **Extensions dir auto-detection** falls back to `{binary-dir}/extensions/`. During development, set `pi.extensions_dir` in config to the absolute path of your `extensions/` directory.
 4. **Session IDs use UUID prefixes** — `sess-{uuid8}`. Collision risk is negligible.
-5. **`extension_ui_response`** is sent as an RPC command with the JSON response embedded in the `Text` field. This is a bridge protocol detail, not a pi standard.
+5. **`extension_ui_response` is sent as raw JSON** via `sendJSON(ExtensionUIResponse{...})` — NOT wrapped in an `RPCCommand`. Pi expects the response object directly on stdin.
 6. **Config YAML keys use snake_case** (`max_concurrent`), matching Go struct `mapstructure` tags.
 7. **`ValidateURL()` does real DNS lookups** — tests that call it need network access or should mock.
-8. **The `Prompt()` method is non-blocking** — it sends the command and returns immediately. Completion is signaled via the `Done()` channel.
+8. **The `Prompt()` method is non-blocking** — it sends the command and returns immediately. Completion is signaled via `agent_end` event (closes `doneCh`) or pi process exit (closes `b.Done()`).
 9. **TypeScript extensions cannot import from each other** — each is loaded independently by pi.
 10. **Socket permissions are 0700** (owner-only). The server removes stale sockets on startup.
 11. **Memory profile updates use heuristics** — no LLM calls. They extract project paths and topics from user messages.
 12. **Compaction is deterministic** — all three strategies (rolling, facts, topics) use string processing, no LLM.
+13. **Pi prompt field is `"message"` not `"text"`** — sending `{"type":"prompt","text":"..."}` causes a silent `startsWith` crash in pi's internals. Always use `{"type":"prompt","message":"..."}`.
+14. **Pi's "done" signal is `agent_end`** — not a `"done"` type event. The `response` events (e.g. `{"type":"response","command":"prompt","success":true}`) are command acknowledgments, not completion signals. Streaming text comes via `message_update` events with `assistantMessageEvent.type == "text_delta"`.
+15. **`BlockedEnvPrefixes` must not block the LLM provider key** — pi needs its provider credentials (e.g. `ANTHROPIC_API_KEY`) to function. The blocked list is for secrets pi's agent should not exfiltrate, not for credentials pi itself uses. If using file-based auth (Claude subscription), this is moot, but keep it in mind for API key setups.

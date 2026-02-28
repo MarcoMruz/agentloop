@@ -31,15 +31,19 @@ func TestBuildSafeEnv(t *testing.T) {
 }
 
 func TestRPCCommandSerialization(t *testing.T) {
-	cmd := RPCCommand{Type: "prompt", ID: "test-1", Text: "hello world"}
+	cmd := RPCCommand{Type: "prompt", ID: "test-1", Message: "hello world"}
 	data, err := json.Marshal(cmd)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var parsed map[string]any
 	json.Unmarshal(data, &parsed)
-	if parsed["type"] != "prompt" || parsed["id"] != "test-1" {
+	if parsed["type"] != "prompt" || parsed["id"] != "test-1" || parsed["message"] != "hello world" {
 		t.Fatalf("unexpected serialization: %s", string(data))
+	}
+	// Ensure old "text" field is not present
+	if _, hasText := parsed["text"]; hasText {
+		t.Fatalf("PROTOCOL: 'text' field must not be used, pi expects 'message': %s", string(data))
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -63,27 +64,50 @@ func (c *Core) Run(ctx context.Context, memoryContext string, task string, sess 
 	b := bridge.New(c.piCfg, c.secCfg)
 
 	doneCh := make(chan struct{})
+	var doneOnce sync.Once
+	closeDone := func() { doneOnce.Do(func() { close(doneCh) }) }
 
 	b.SetEventHandler(func(event bridge.RPCEvent) error {
 		switch event.Type {
-		case "text":
-			output.WriteString(event.Content)
-			if c.cb.OnText != nil { c.cb.OnText(event.Content) }
+		case "message_update":
+			if event.AssistantMessageEvent == nil {
+				break
+			}
+			switch event.AssistantMessageEvent.Type {
+			case "text_delta":
+				delta := event.AssistantMessageEvent.Delta
+				output.WriteString(delta)
+				if c.cb.OnText != nil { c.cb.OnText(delta) }
+			case "error":
+				if c.cb.OnError != nil { c.cb.OnError("LLM streaming error") }
+				closeDone()
+			}
 
-		case "tool_use":
-			toolsUsed = append(toolsUsed, event.Name)
-			if c.cb.OnToolUse != nil { c.cb.OnToolUse(event.Name, event.Input) }
+		case "tool_execution_start":
+			toolsUsed = append(toolsUsed, event.ToolName)
+			if c.cb.OnToolUse != nil { c.cb.OnToolUse(event.ToolName, event.Args) }
 
-		case "tool_result":
-			success := !strings.Contains(strings.ToLower(event.Output), "error")
-			if c.cb.OnToolResult != nil { c.cb.OnToolResult(event.Name, event.Output, success) }
+		case "tool_execution_end":
+			if c.cb.OnToolResult != nil {
+				var outText string
+				if event.Result != nil {
+					for _, block := range event.Result.Content {
+						if block.Type == "text" { outText += block.Text }
+					}
+				}
+				c.cb.OnToolResult(event.ToolName, outText, !event.IsError)
+			}
 
-		case "done":
-			close(doneCh)
+		case "agent_end":
+			closeDone()
 
-		case "error":
-			if c.cb.OnError != nil { c.cb.OnError(event.Message) }
-			close(doneCh)
+		case "auto_retry_end":
+			if !event.Success {
+				errMsg := event.FinalError
+				if errMsg == "" { errMsg = "agent failed after retries" }
+				if c.cb.OnError != nil { c.cb.OnError(errMsg) }
+				closeDone()
+			}
 		}
 		return nil
 	})
@@ -119,13 +143,17 @@ func (c *Core) Run(ctx context.Context, memoryContext string, task string, sess 
 	// Start pi
 	workDir := "" // session workDir passed via context
 	if err := b.Start(ctx, workDir); err != nil {
-		return RunResult{Error: fmt.Sprintf("failed to start pi: %v", err)}
+		errMsg := fmt.Sprintf("failed to start pi: %v", err)
+		if c.cb.OnError != nil { c.cb.OnError(errMsg) }
+		return RunResult{Error: errMsg}
 	}
 	defer b.Stop()
 
 	// Send prompt
 	if err := b.Prompt(ctx, "task", fullPrompt); err != nil {
-		return RunResult{Error: fmt.Sprintf("failed to send prompt: %v", err)}
+		errMsg := fmt.Sprintf("failed to send prompt: %v", err)
+		if c.cb.OnError != nil { c.cb.OnError(errMsg) }
+		return RunResult{Error: errMsg}
 	}
 
 	// Wait for completion, abort, or steer
@@ -144,6 +172,29 @@ func (c *Core) Run(ctx context.Context, memoryContext string, task string, sess 
 			}
 			if c.cb.OnDone != nil { c.cb.OnDone(result.Output, stats) }
 			return result
+
+		case <-b.Done():
+			// pi process exited. Check if we already received a "done" event
+			// (race: pi exits immediately after sending "done").
+			select {
+			case <-doneCh:
+				stats := RunStats{
+					Tokens:    estimateTokens(output.String()),
+					ToolCalls: len(toolsUsed),
+					Duration:  time.Since(start),
+				}
+				result := RunResult{
+					Output:    output.String(),
+					ToolsUsed: unique(toolsUsed),
+					Stats:     stats,
+				}
+				if c.cb.OnDone != nil { c.cb.OnDone(result.Output, stats) }
+				return result
+			default:
+				errMsg := "pi process exited unexpectedly"
+				if c.cb.OnError != nil { c.cb.OnError(errMsg) }
+				return RunResult{Output: output.String(), Error: errMsg, ToolsUsed: unique(toolsUsed)}
+			}
 
 		case <-sess.AbortCh():
 			b.Abort("task")

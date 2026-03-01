@@ -38,12 +38,13 @@ type MemoryConfig struct {
 }
 
 type SessionConfig struct {
-	MaxConcurrent  int `mapstructure:"max_concurrent"`
-	MaxPerUser     int `mapstructure:"max_per_user"`
-	TimeoutMinutes int `mapstructure:"timeout_minutes"`
-	MaxTokenBudget int `mapstructure:"max_token_budget"`
-	MaxToolCalls   int `mapstructure:"max_tool_calls"`
-	StuckThreshold int `mapstructure:"stuck_threshold"`
+	MaxConcurrent  int  `mapstructure:"max_concurrent"`
+	MaxPerUser     int  `mapstructure:"max_per_user"`
+	TimeoutMinutes int  `mapstructure:"timeout_minutes"`
+	MaxTokenBudget int  `mapstructure:"max_token_budget"`
+	MaxToolCalls   int  `mapstructure:"max_tool_calls"`
+	StuckThreshold int  `mapstructure:"stuck_threshold"`
+	EvictLRU       bool `mapstructure:"evict_lru"`
 }
 
 type HITLConfig struct {
@@ -87,12 +88,13 @@ func Defaults() *Config {
 			PromptCacheTTLMinutes:  60,
 		},
 		Sessions: SessionConfig{
-			MaxConcurrent:  3,
-			MaxPerUser:     1,
+			MaxConcurrent:  5,
+			MaxPerUser:     5,
 			TimeoutMinutes: 30,
 			MaxTokenBudget: 200000,
 			MaxToolCalls:   100,
 			StuckThreshold: 3,
+			EvictLRU:       true,
 		},
 		HITL: HITLConfig{
 			AlwaysPauseTools: []string{"docker", "git push", "rm -r", "curl", "wget"},

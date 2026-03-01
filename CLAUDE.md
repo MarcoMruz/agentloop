@@ -355,7 +355,7 @@ Do NOT add dependencies without explicit approval. The project intentionally has
 | `pi` | `PiConfig` | Pi binary path, provider, model, extensions dir, extra args |
 | `vault` | `VaultConfig` | Vault storage path |
 | `memory` | `MemoryConfig` | Profile entries limit, conversation retention, compaction settings, cache TTL |
-| `sessions` | `SessionConfig` | Max concurrent, max per user, timeout, token budget, tool call limit, stuck threshold |
+| `sessions` | `SessionConfig` | Max concurrent, max per user, timeout, token budget, tool call limit, stuck threshold, LRU eviction |
 | `hitl` | `HITLConfig` | Always-pause tools, timeout, timeout action |
 | `security` | `SecurityConfig` | Allowed paths, blocked env prefixes, blocked CIDRs, docker rules |
 | `skills` | `SkillsConfig` | Skill directory paths |
@@ -386,6 +386,7 @@ JSON-RPC 2.0 server over Unix domain socket. Manages client connections and disp
 - Session IDs are UUID-based: `sess-{uuid8}`
 - Per-user session limits enforced in `StartSession()`
 - HITL resolution via channels: `SetPendingHITL()` → `WaitHITL()` → `ResolveHITL()`
+- LRU eviction: when `max_concurrent` is reached and `evict_lru: true`, `evictOldestLRU()` aborts the session with the oldest `LastActivity` and removes it from maps immediately; `LastActivity` is updated via `Touch()` on every `OnText` callback
 
 ### `internal/agent` — Agent Core
 

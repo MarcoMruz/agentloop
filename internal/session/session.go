@@ -31,34 +31,50 @@ type SessionInfo struct {
 }
 
 type Session struct {
-	ID        string
-	UserID    string
-	Task      string
-	WorkDir   string
-	Source    string
-	State     State
-	StartedAt time.Time
+	ID           string
+	UserID       string
+	Task         string
+	WorkDir      string
+	Source       string
+	State        State
+	StartedAt    time.Time
+	LastActivity time.Time
 
-	mu           sync.Mutex
-	steerCh      chan string
-	abortCh      chan struct{}
-	hitlPending  map[string]chan string // requestId → decision channel
-	result       *agent.RunResult
+	mu          sync.Mutex
+	steerCh     chan string
+	abortCh     chan struct{}
+	hitlPending map[string]chan string // requestId → decision channel
+	result      *agent.RunResult
 }
 
 func NewSession(userId, task, workDir, source string) *Session {
+	now := time.Now()
 	return &Session{
-		ID:          fmt.Sprintf("sess-%s", uuid.New().String()[:8]),
-		UserID:      userId,
-		Task:        task,
-		WorkDir:     workDir,
-		Source:      source,
-		State:       StateStarting,
-		StartedAt:   time.Now(),
-		steerCh:     make(chan string, 5),
-		abortCh:     make(chan struct{}),
-		hitlPending: make(map[string]chan string),
+		ID:           fmt.Sprintf("sess-%s", uuid.New().String()[:8]),
+		UserID:       userId,
+		Task:         task,
+		WorkDir:      workDir,
+		Source:       source,
+		State:        StateStarting,
+		StartedAt:    now,
+		LastActivity: now,
+		steerCh:      make(chan string, 5),
+		abortCh:      make(chan struct{}),
+		hitlPending:  make(map[string]chan string),
 	}
+}
+
+// Touch updates LastActivity to now. Called on every text response from the agent.
+func (s *Session) Touch() {
+	s.mu.Lock()
+	s.LastActivity = time.Now()
+	s.mu.Unlock()
+}
+
+func (s *Session) GetLastActivity() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.LastActivity
 }
 
 func (s *Session) Info() SessionInfo {

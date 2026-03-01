@@ -20,12 +20,13 @@ memory:
   prompt_cache_ttl_minutes: 60
 
 sessions:
-  max_concurrent: 3
-  max_per_user: 1
+  max_concurrent: 5
+  max_per_user: 5
   timeout_minutes: 30
   max_token_budget: 200000
   max_tool_calls: 100
   stuck_threshold: 3
+  evict_lru: true  # when max_concurrent is reached, abort the session with oldest last response
 
 hitl:
   always_pause_tools:

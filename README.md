@@ -415,11 +415,13 @@ For full config documentation, see `configs/agentloop.yaml`. Below are the main 
 | | `conversation_retention_days` | `30` | Keep conversation logs for N days |
 | | `cache_ttl_minutes` | `60` | Prompt cache validity period |
 | | `compaction_strategy` | `rolling` | rolling, facts, or topics |
-| `sessions` | `max_concurrent` | `5` | Max simultaneous sessions |
-| | `max_per_user` | `3` | Max concurrent sessions per user |
-| | `timeout_minutes` | `60` | Session timeout |
-| | `token_budget` | `200000` | Max tokens per session |
-| | `max_tool_calls` | `50` | Max tools per session |
+| `sessions` | `max_concurrent` | `5` | Max simultaneous sessions across all users |
+| | `max_per_user` | `5` | Max concurrent sessions per user |
+| | `timeout_minutes` | `30` | Session timeout |
+| | `max_token_budget` | `200000` | Max tokens per session |
+| | `max_tool_calls` | `100` | Max tool calls per session |
+| | `stuck_threshold` | `3` | Consecutive errors before stuck detection |
+| | `evict_lru` | `true` | When full, abort session with oldest last response instead of rejecting |
 | `hitl` | `always_pause_tools` | `[docker]` | Tools requiring manual approval |
 | | `timeout_seconds` | `300` | Auto-abort HITL wait after N seconds |
 | `security` | `allowed_paths` | `[]` | Whitelisted write paths (empty = no restriction) |

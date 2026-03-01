@@ -54,8 +54,12 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 
 	// Enforce limits
 	if len(m.sessions) >= m.cfg.MaxConcurrent {
-		m.mu.Unlock()
-		return nil, fmt.Errorf("max concurrent sessions (%d) reached", m.cfg.MaxConcurrent)
+		if !m.cfg.EvictLRU {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("max concurrent sessions (%d) reached", m.cfg.MaxConcurrent)
+		}
+		evictedID := m.evictOldestLRU()
+		slog.Info("evicted LRU session to make room", "evicted", evictedID)
 	}
 	userSessions := m.userMap[req.UserID]
 	if len(userSessions) >= m.cfg.MaxPerUser {
@@ -74,6 +78,7 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 
 		agentCore := agent.New(m.piCfg, m.secCfg, agent.Callbacks{
 			OnText: func(content string) {
+				sess.Touch()
 				req.Broadcaster.Broadcast(sess.ID, "event.text", map[string]any{
 					"sessionId": sess.ID, "content": content,
 				})
@@ -196,6 +201,35 @@ func (m *Manager) cleanupSession(sess *Session) {
 	if len(m.userMap[sess.UserID]) == 0 {
 		delete(m.userMap, sess.UserID)
 	}
+}
+
+// evictOldestLRU aborts and removes the session with the oldest LastActivity.
+// Must be called with m.mu write-locked.
+func (m *Manager) evictOldestLRU() string {
+	var oldest *Session
+	for _, sess := range m.sessions {
+		if oldest == nil || sess.GetLastActivity().Before(oldest.GetLastActivity()) {
+			oldest = sess
+		}
+	}
+	if oldest == nil {
+		return ""
+	}
+	oldest.Abort()
+	// Remove from maps immediately so cleanupSession (called by the goroutine
+	// defer) becomes a no-op rather than re-cleaning already-absent entries.
+	delete(m.sessions, oldest.ID)
+	ids := m.userMap[oldest.UserID]
+	for i, id := range ids {
+		if id == oldest.ID {
+			m.userMap[oldest.UserID] = append(ids[:i], ids[i+1:]...)
+			break
+		}
+	}
+	if len(m.userMap[oldest.UserID]) == 0 {
+		delete(m.userMap, oldest.UserID)
+	}
+	return oldest.ID
 }
 
 func truncate(s string, n int) string {

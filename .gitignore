@@ -1,0 +1,24 @@
+# Build artifacts
+agentloop-server
+agentloop
+*.exe
+
+# Development directories
+dev/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.temp
+
+# Logs
+*.log

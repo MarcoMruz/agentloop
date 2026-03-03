@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/user/agentloop/internal/memory"
-	"github.com/user/agentloop/internal/skills"
+	"github.com/MarcoMruz/agentloop/internal/memory"
+	"github.com/MarcoMruz/agentloop/internal/skills"
 )
 
 // PromptBuilder constructs the full prompt sent to pi.

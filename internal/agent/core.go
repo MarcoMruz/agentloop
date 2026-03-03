@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/user/agentloop/internal/bridge"
-	"github.com/user/agentloop/internal/config"
+	"github.com/MarcoMruz/agentloop/internal/bridge"
+	"github.com/MarcoMruz/agentloop/internal/config"
 )
 
 type RunStats struct {

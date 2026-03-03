@@ -13,7 +13,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/user/agentloop/internal/config"
+	"github.com/MarcoMruz/agentloop/internal/config"
 )
 
 // EventHandler is called for each event from pi.

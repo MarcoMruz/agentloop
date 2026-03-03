@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/user/agentloop/internal/agent"
-	"github.com/user/agentloop/internal/vault"
+	"github.com/MarcoMruz/agentloop/internal/agent"
+	"github.com/MarcoMruz/agentloop/internal/vault"
 )
 
 type State string

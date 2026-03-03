@@ -1,4 +1,4 @@
-module github.com/user/agentloop
+module github.com/MarcoMruz/agentloop
 
 go 1.23.0
 

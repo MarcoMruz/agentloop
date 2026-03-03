@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/user/agentloop/internal/memory"
-	"github.com/user/agentloop/internal/session"
+	"github.com/MarcoMruz/agentloop/internal/memory"
+	"github.com/MarcoMruz/agentloop/internal/session"
 )
 
 type Handler struct {

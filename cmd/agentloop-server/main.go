@@ -8,13 +8,13 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/user/agentloop/internal/config"
-	"github.com/user/agentloop/internal/logging"
-	"github.com/user/agentloop/internal/memory"
-	"github.com/user/agentloop/internal/server"
-	"github.com/user/agentloop/internal/session"
-	"github.com/user/agentloop/internal/skills"
-	"github.com/user/agentloop/internal/vault"
+	"github.com/MarcoMruz/agentloop/internal/config"
+	"github.com/MarcoMruz/agentloop/internal/logging"
+	"github.com/MarcoMruz/agentloop/internal/memory"
+	"github.com/MarcoMruz/agentloop/internal/server"
+	"github.com/MarcoMruz/agentloop/internal/session"
+	"github.com/MarcoMruz/agentloop/internal/skills"
+	"github.com/MarcoMruz/agentloop/internal/vault"
 )
 
 var version = "dev"

@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/user/agentloop/internal/agent"
-	"github.com/user/agentloop/internal/config"
-	"github.com/user/agentloop/internal/memory"
-	"github.com/user/agentloop/internal/vault"
+	"github.com/MarcoMruz/agentloop/internal/agent"
+	"github.com/MarcoMruz/agentloop/internal/config"
+	"github.com/MarcoMruz/agentloop/internal/memory"
+	"github.com/MarcoMruz/agentloop/internal/vault"
 )
 
 type Broadcaster interface {

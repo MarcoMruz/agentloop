@@ -59,6 +59,19 @@ type SecurityConfig struct {
 	BlockedCIDRs             []string `mapstructure:"blocked_cidrs"`
 	DockerAllowedSubcommands []string `mapstructure:"docker_allowed_subcommands"`
 	DockerBlockedVolumePaths []string `mapstructure:"docker_blocked_volume_paths"`
+	Injection                InjectionConfig `mapstructure:"injection"`
+}
+
+type InjectionConfig struct {
+	EnableProtection    bool     `mapstructure:"enable_protection"`
+	WhitelistSources    []string `mapstructure:"whitelist_sources"`
+	BlockedKeywords     []string `mapstructure:"blocked_keywords"`
+	SanitizeMemory      bool     `mapstructure:"sanitize_memory"`
+	RequireApproval     []string `mapstructure:"require_approval"`
+	ApprovalTier        string   `mapstructure:"approval_tier"`
+	SensitivePatterns   []string `mapstructure:"sensitive_patterns"`
+	MaxContentLength    int      `mapstructure:"max_content_length"`
+	DetectionThreshold  float64  `mapstructure:"detection_threshold"`
 }
 
 type SkillsConfig struct {
@@ -107,6 +120,44 @@ func Defaults() *Config {
 			BlockedCIDRs:             []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10"},
 			DockerAllowedSubcommands: []string{"ps", "logs", "images", "build", "compose", "inspect", "stats", "top", "exec", "run", "stop", "start", "restart", "rm"},
 			DockerBlockedVolumePaths: []string{"/etc", "/var", "/root", "/proc", "/sys", "/dev"},
+			Injection: InjectionConfig{
+				EnableProtection: true,
+				WhitelistSources: []string{"~/projects", "~/agentloop-sandbox", "~/.config/agentloop"},
+				BlockedKeywords: []string{
+					"ignore previous instructions",
+					"forget everything above",
+					"act as if you are",
+					"pretend you are",
+					"roleplay as",
+					"API_KEY",
+					"SECRET",
+					"TOKEN",
+					"PASSWORD",
+					"PRIVATE_KEY",
+					"credentials",
+					"auth",
+					"login",
+				},
+				SanitizeMemory: true,
+				RequireApproval: []string{
+					"skills/*",
+					"node_modules/*",
+					"*/attachments/*",
+					"cloud:*",
+					"fetch:*",
+					".git/*",
+				},
+				ApprovalTier: "owner",
+				SensitivePatterns: []string{
+					`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b`,
+					`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`,
+					`\b[A-Fa-f0-9]{32,}\b`,
+					`sk-[a-zA-Z0-9]{48}`,
+					`xoxb-[0-9]+-[0-9]+-[0-9]+-[a-zA-Z0-9]+`,
+				},
+				MaxContentLength:   50000,
+				DetectionThreshold: 0.7,
+			},
 		},
 		Skills:  SkillsConfig{SkillDirs: []string{"~/.local/share/agentloop/vault/skills"}},
 		Logging: LoggingConfig{Level: "info"},

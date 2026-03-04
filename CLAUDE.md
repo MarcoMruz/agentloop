@@ -357,7 +357,7 @@ Do NOT add dependencies without explicit approval. The project intentionally has
 | `memory` | `MemoryConfig` | Profile entries limit, conversation retention, compaction settings, cache TTL |
 | `sessions` | `SessionConfig` | Max concurrent, max per user, timeout, token budget, tool call limit, stuck threshold, LRU eviction |
 | `hitl` | `HITLConfig` | Always-pause tools, timeout, timeout action |
-| `security` | `SecurityConfig` | Allowed paths, blocked env prefixes, blocked CIDRs, docker rules |
+| `security` | `SecurityConfig` | Allowed paths, blocked env prefixes, blocked CIDRs, docker rules, **injection protection** |
 | `skills` | `SkillsConfig` | Skill directory paths |
 | `logging` | `LoggingConfig` | Log level, log file path |
 
@@ -521,13 +521,30 @@ Raw conversation text
 
 ### `internal/security` — Security Policy Validation
 
-Three validators, all return `error` (nil = allowed):
+**Core validators** (all return `error`, nil = allowed):
 
 | Function | Purpose | Inputs |
 |----------|---------|--------|
 | `ValidatePath(path, allowedPaths)` | Block path traversal, enforce allowed dirs | `filepath.Clean()` + prefix check |
 | `ValidateURL(rawURL, blockedCIDRs, allowedDomains)` | SSRF protection | DNS resolution + CIDR check |
 | `ValidateDockerCommand(cmd, allowedSubs, blockedVolPaths)` | Docker restrictions | Subcommand whitelist + volume mount check |
+
+**Prompt injection protection** (`injection.go`):
+
+| Function | Purpose | 
+|----------|---------|
+| `DetectInjectionRisk(content, source, config)` | Analyze content for prompt injection patterns and assign risk level |
+| `ValidateToolCallSource(toolName, filePath, cmd, config)` | Check if tool call from source requires approval |
+| `SanitizeContent(content, config)` | Remove/mask sensitive data and injection patterns |
+
+**Injection sources monitored:**
+- `SourceSkill` - Skills folder contents  
+- `SourceNodeModules` - Node.js dependencies
+- `SourceEmailAttachment` - Email attachments
+- `SourceCloudFile` - Cloud storage files
+- `SourceFetchResponse` - Network fetch responses
+- `SourceGitRepo` - Git repository files  
+- `SourceUserInput` - Direct user input (safe)
 
 ### `internal/config` — Configuration
 
@@ -565,6 +582,7 @@ Extensions are TypeScript files in `extensions/` that pi loads via the `-e` flag
 |-----------|------|---------|
 | `security-policy.ts` | Permission gate | Blocks dangerous bash patterns, validates file write paths |
 | `docker-guard.ts` | Permission gate | Validates docker subcommands + volume mounts |
+| `prompt-injection-guard.ts` | Permission gate | **NEW:** Detects prompt injection attempts from risky sources |
 
 ### Extension Environment Variables
 
@@ -573,6 +591,13 @@ Extensions are TypeScript files in `extensions/` that pi loads via the `-e` flag
 | `AGENTLOOP_ALLOWED_PATHS` | security-policy.ts | Comma-separated paths | (empty = no restriction) |
 | `AGENTLOOP_DOCKER_ALLOWED` | docker-guard.ts | Comma-separated subcommands | `ps,logs,images,build,compose,inspect,stats` |
 | `AGENTLOOP_DOCKER_BLOCKED_VOLS` | docker-guard.ts | Comma-separated paths | `/etc,/var,/root,/proc,/sys,/dev` |
+| `AGENTLOOP_INJECTION_PROTECTION` | **prompt-injection-guard.ts** | **"true"/"false"** | **true** |
+| `AGENTLOOP_WHITELIST_SOURCES` | **prompt-injection-guard.ts** | **Comma-separated paths** | **Config whitelist_sources** |
+| `AGENTLOOP_BLOCKED_KEYWORDS` | **prompt-injection-guard.ts** | **Comma-separated keywords** | **Config blocked_keywords** |
+| `AGENTLOOP_REQUIRE_APPROVAL` | **prompt-injection-guard.ts** | **Comma-separated patterns** | **Config require_approval** |
+| `AGENTLOOP_MAX_CONTENT_LENGTH` | **prompt-injection-guard.ts** | **Number** | **50000** |
+| `AGENTLOOP_APPROVAL_TIER` | **prompt-injection-guard.ts** | **"owner"/"admin"/"auto-deny"** | **"owner"** |
+| `AGENTLOOP_SANITIZE_MEMORY` | **prompt-injection-guard.ts** | **"true"/"false"** | **true** |
 
 ### Adding a New Extension
 
@@ -602,11 +627,13 @@ Extensions are TypeScript files in `extensions/` that pi loads via the `-e` flag
 
 Any modification to these requires explicit user approval:
 - `internal/security/policy.go` or `policy_test.go`
+- **`internal/security/injection.go` or `injection_test.go`** ⭐ **NEW**
 - `internal/bridge/rpc.go` (specifically `buildSafeEnv()`)
 - `extensions/security-policy.ts`
 - `extensions/docker-guard.ts`
-- `SecurityConfig` fields in `internal/config/config.go`
-- Blocked env prefixes, blocked CIDRs, allowed paths, docker rules in `Defaults()`
+- **`extensions/prompt-injection-guard.ts`** ⭐ **NEW**
+- `SecurityConfig` fields in `internal/config/config.go` (including `InjectionConfig`)
+- Blocked env prefixes, blocked CIDRs, allowed paths, docker rules, **injection config** in `Defaults()`
 
 ### Security Test Requirements
 

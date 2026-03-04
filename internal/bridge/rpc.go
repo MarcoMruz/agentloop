@@ -92,7 +92,7 @@ func (b *PiBridge) Start(ctx context.Context, workDir string) error {
 	b.cmd.Dir = workDir
 
 	// SECURITY: Build sanitized environment for pi subprocess
-	b.cmd.Env = buildSafeEnv(b.secCfg.BlockedEnvPrefixes)
+	b.cmd.Env = buildSafeEnv(b.secCfg.BlockedEnvPrefixes, b.secCfg.Injection)
 
 	var err error
 	b.stdin, err = b.cmd.StdinPipe()
@@ -234,8 +234,8 @@ func (b *PiBridge) readStderr() {
 	}
 }
 
-// buildSafeEnv creates an environment with sensitive vars stripped.
-func buildSafeEnv(blockedPrefixes []string) []string {
+// buildSafeEnv creates an environment with sensitive vars stripped and injection protection vars added.
+func buildSafeEnv(blockedPrefixes []string, injectionCfg config.InjectionConfig) []string {
 	var safe []string
 	for _, envVar := range os.Environ() {
 		parts := strings.SplitN(envVar, "=", 2)
@@ -254,6 +254,23 @@ func buildSafeEnv(blockedPrefixes []string) []string {
 			safe = append(safe, envVar)
 		}
 	}
+
+	// Add injection protection configuration for TypeScript extensions
+	if injectionCfg.EnableProtection {
+		safe = append(safe, "AGENTLOOP_INJECTION_PROTECTION=true")
+		safe = append(safe, "AGENTLOOP_WHITELIST_SOURCES="+strings.Join(injectionCfg.WhitelistSources, ","))
+		safe = append(safe, "AGENTLOOP_BLOCKED_KEYWORDS="+strings.Join(injectionCfg.BlockedKeywords, ","))
+		safe = append(safe, "AGENTLOOP_REQUIRE_APPROVAL="+strings.Join(injectionCfg.RequireApproval, ","))
+		safe = append(safe, fmt.Sprintf("AGENTLOOP_MAX_CONTENT_LENGTH=%d", injectionCfg.MaxContentLength))
+		safe = append(safe, fmt.Sprintf("AGENTLOOP_DETECTION_THRESHOLD=%.2f", injectionCfg.DetectionThreshold))
+		safe = append(safe, "AGENTLOOP_APPROVAL_TIER="+injectionCfg.ApprovalTier)
+		if injectionCfg.SanitizeMemory {
+			safe = append(safe, "AGENTLOOP_SANITIZE_MEMORY=true")
+		}
+	} else {
+		safe = append(safe, "AGENTLOOP_INJECTION_PROTECTION=false")
+	}
+
 	return safe
 }
 

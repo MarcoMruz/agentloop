@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/user/agentloop/internal/config"
 )
 
 func TestBuildSafeEnv(t *testing.T) {
@@ -13,12 +15,25 @@ func TestBuildSafeEnv(t *testing.T) {
 	defer os.Unsetenv("ANTHROPIC_API_KEY")
 	defer os.Unsetenv("SAFE_VAR")
 
-	env := buildSafeEnv([]string{"ANTHROPIC_", "OPENAI_"})
+	injectionCfg := config.InjectionConfig{
+		EnableProtection: true,
+		WhitelistSources: []string{"~/projects", "~/sandbox"},
+		BlockedKeywords:  []string{"test-keyword"},
+		MaxContentLength: 10000,
+		ApprovalTier:     "owner",
+		SanitizeMemory:   true,
+	}
+
+	env := buildSafeEnv([]string{"ANTHROPIC_", "OPENAI_"}, injectionCfg)
+	
+	// Check that sensitive env vars are stripped
 	for _, e := range env {
 		if strings.HasPrefix(e, "ANTHROPIC_") {
 			t.Fatal("SECURITY: sensitive env var leaked")
 		}
 	}
+	
+	// Check that safe vars are preserved
 	found := false
 	for _, e := range env {
 		if strings.HasPrefix(e, "SAFE_VAR=") {
@@ -27,6 +42,30 @@ func TestBuildSafeEnv(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected SAFE_VAR to be preserved")
+	}
+
+	// Check injection protection env vars are set
+	expectedVars := map[string]bool{
+		"AGENTLOOP_INJECTION_PROTECTION=true":         false,
+		"AGENTLOOP_WHITELIST_SOURCES=~/projects,~/sandbox": false,
+		"AGENTLOOP_BLOCKED_KEYWORDS=test-keyword":     false,
+		"AGENTLOOP_MAX_CONTENT_LENGTH=10000":          false,
+		"AGENTLOOP_APPROVAL_TIER=owner":               false,
+		"AGENTLOOP_SANITIZE_MEMORY=true":              false,
+	}
+
+	for _, envVar := range env {
+		for expected := range expectedVars {
+			if envVar == expected {
+				expectedVars[expected] = true
+			}
+		}
+	}
+
+	for expected, found := range expectedVars {
+		if !found {
+			t.Fatalf("SECURITY: missing injection protection env var: %s", expected)
+		}
 	}
 }
 

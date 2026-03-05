@@ -8,14 +8,14 @@ pi:
   binary: pi
   provider: anthropic
   model: claude-sonnet-4-20250514
-  extensions_dir: ""  # auto-detected
+  extensions_dir: "" # auto-detected
   extra_args: []
 
 memory:
   max_profile_entries: 50
   conversation_retain_days: 30
   compaction_threshold: 40
-  compaction_strategy: rolling  # rolling, facts, or topics
+  compaction_strategy: rolling # rolling, facts, or topics
   max_context_tokens: 3000
   prompt_cache_ttl_minutes: 60
 
@@ -26,7 +26,7 @@ sessions:
   max_token_budget: 200000
   max_tool_calls: 100
   stuck_threshold: 3
-  evict_lru: true  # when max_concurrent is reached, abort the session with oldest last response
+  evict_lru: true # when max_concurrent is reached, abort the session with oldest last response
 
 hitl:
   always_pause_tools:
@@ -35,8 +35,21 @@ hitl:
     - rm -r
     - curl
     - wget
+    - bash  # Force HITL for ALL bash commands
+    - write # Force HITL for ALL file writes
+    - edit  # Force HITL for ALL file edits
   timeout_seconds: 300
   timeout_action: deny
+  # Keywords that trigger HITL approval in the force-hitl extension.
+  # Any bash command containing one of these strings will pause for user approval.
+  force_hitl_keywords:
+    - sudo
+    - chmod
+    - chown
+    - systemctl
+    - npm install
+    - pip install
+    - yarn add
 
 security:
   allowed_paths:
@@ -111,20 +124,20 @@ security:
       - "cloud:*"
       - "fetch:*"
       - .git/*
-    approval_tier: owner  # owner, admin, auto-deny
+    approval_tier: owner # owner, admin, auto-deny
     sensitive_patterns:
-      - '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'  # emails
-      - '\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'                     # IP addresses  
-      - 'sk-[a-zA-Z0-9]{48}'                                     # OpenAI keys
-      - 'xoxb-[0-9]+-[0-9]+-[0-9]+-[a-zA-Z0-9]+'               # Slack tokens
-      - '\b[A-Fa-f0-9]{32,}\b'                                  # hex keys (after specific patterns)
-    max_content_length: 50000      # 50KB max content size
-    detection_threshold: 0.7       # 70% confidence threshold
+      - '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b' # emails
+      - '\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b' # IP addresses
+      - "sk-[a-zA-Z0-9]{48}" # OpenAI keys
+      - "xoxb-[0-9]+-[0-9]+-[0-9]+-[a-zA-Z0-9]+" # Slack tokens
+      - '\b[A-Fa-f0-9]{32,}\b' # hex keys (after specific patterns)
+    max_content_length: 50000 # 50KB max content size
+    detection_threshold: 0.7 # 70% confidence threshold
 
 skills:
   skill_dirs:
     - ~/.local/share/agentloop/vault/skills
 
 logging:
-  level: info
+  level: debug
   file: ~/.config/agentloop/agentloop.log

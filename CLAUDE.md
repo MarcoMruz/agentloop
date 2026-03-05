@@ -191,9 +191,6 @@ agentloop/
 │   ├── skills/
 │   │   └── registry.go             # Skill registry (name → instructions + triggers)
 │   │
-│   ├── hitl/
-│   │   └── gate.go                 # HITL types + formatting
-│   │
 │   ├── vault/
 │   │   ├── vault.go                # Vault directory management
 │   │   ├── session.go              # Read/write session markdown
@@ -306,7 +303,6 @@ import "github.com/user/agentloop/internal/agent"
 import "github.com/user/agentloop/internal/bridge"
 import "github.com/user/agentloop/internal/config"
 import "github.com/user/agentloop/internal/errors"
-import "github.com/user/agentloop/internal/hitl"
 import "github.com/user/agentloop/internal/logging"
 import "github.com/user/agentloop/internal/memory"
 import "github.com/user/agentloop/internal/security"
@@ -469,10 +465,6 @@ Skills are on-demand instruction sets loaded from the vault. Each skill director
 
 **`Registry`** — scans skill directories, parses SKILL.md files. `DetectSkills()` in PromptBuilder matches task text against skill triggers.
 
-### `internal/hitl` — Human-in-the-Loop Types
-
-Defines `Decision` type and `FormatSummary()` for HITL display formatting. In v3, HITL flows through the socket (agent core → session → server broadcast → client), not through terminal stdin.
-
 ### `internal/vault` — Session Persistence
 
 **Storage format:** Obsidian-compatible Markdown with YAML frontmatter.
@@ -602,7 +594,7 @@ Extensions are TypeScript files in `extensions/` that pi loads via the `-e` flag
 ### Adding a New Extension
 
 1. Create `extensions/my-extension.ts`
-2. Use `ExtensionFactory` pattern with `pi.on("toolCall", ...)` or `pi.addTool({...})`
+2. Use `ExtensionFactory` pattern with `pi.on("tool_call", ...)` or `pi.addTool({...})`
 3. Export default the factory
 4. Auto-loaded by PiBridge (picks up all `.ts`/`.js` in extensions dir)
 5. For env-based config, use `process.env.AGENTLOOP_*` naming convention
@@ -674,7 +666,7 @@ If adding new security behavior, add corresponding test cases with `t.Fatal("SEC
 ### Adding a New Pi Extension
 
 1. Create `extensions/my-extension.ts`
-2. Use `ExtensionFactory` pattern with `pi.on("toolCall", ...)` or `pi.addTool({...})`
+2. Use `ExtensionFactory` pattern with `pi.on("tool_call", ...)` or `pi.addTool({...})`
 3. Export default the factory
 4. Auto-loaded on next server start (no Go changes needed)
 5. For env-based config, use `process.env.AGENTLOOP_*` naming convention
@@ -763,6 +755,31 @@ if errors.IsUserAbort(err) { /* clean exit */ }
 - Prefer returning `error` over panicking.
 - Use `slog.Info/Warn/Error/Debug` for logging, not `fmt.Print` (except for user-facing output in the CLI client).
 - TypeScript extensions: use `const` for the factory, `export default` at bottom.
+
+### TypeScript Extension Style
+
+- **Event name is `"tool_call"`** — never `"toolCall"`. Pi never fires `"toolCall"`; using it silently registers a dead handler.
+- **Event properties**: use `event.toolName` (not `event.tool.name`) and `event.input.<field> as string` (not `event.input?.<field>`).
+- **Return values from `tool_call` handlers**:
+  - Pass through: `return undefined` — never `return { action: "continue" }`
+  - Block: `return { block: true, reason: "..." }` — never `return { action: "block", ... }`
+  - HITL: `await ctx.ui.confirm(title, message)` then `return { block: true, reason }` if denied — never `return { action: "request_permission", ... }`
+  - Always guard with `if (!ctx.hasUI) return { block: true, reason: "... (no UI)" }` before any `ctx.ui` call.
+- **No `for` loops inside handlers** — use `Array.find()` / `Array.some()` / `Array.every()`. Extract named pure functions for all search/match logic so handlers stay declarative:
+  ```ts
+  // ✅ correct
+  function matchedBlockedPattern(cmd: string): string | undefined {
+    return blockedPatterns.find((p) => cmd.includes(p));
+  }
+  const hit = matchedBlockedPattern(command);
+  if (hit) return { block: true, reason: `Blocked: "${hit}"` };
+
+  // ❌ wrong
+  for (const p of blockedPatterns) {
+    if (command.includes(p)) return { block: true, reason: `Blocked: "${p}"` };
+  }
+  ```
+- **No mutable variables inside handlers** — derive all values with `const`; do not reassign with `let`.
 
 ---
 

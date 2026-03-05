@@ -1,4 +1,5 @@
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import path from "node:path";
 
 const securityPolicy: ExtensionFactory = (pi) => {
   // Read security config from environment (set by Go orchestrator)
@@ -15,60 +16,62 @@ const securityPolicy: ExtensionFactory = (pi) => {
     ":(){ :|:& };:",
   ];
 
-  const blockedEnvCommands = ["printenv", "env | ", "echo $ANTHROPIC", "echo $OPENAI"];
+  const blockedEnvCommands = [
+    "printenv",
+    "env | ",
+    "echo $ANTHROPIC",
+    "echo $OPENAI",
+  ];
+
+  function matchedDangerousPattern(command: string): string | undefined {
+    return blockedPatterns.find((pattern) => command.includes(pattern));
+  }
+
+  function matchedEnvExfiltrationPattern(command: string): string | undefined {
+    return blockedEnvCommands.find((pattern) => command.includes(pattern));
+  }
 
   // Intercept bash tool calls
-  pi.on("toolCall", async (event, ctx) => {
-    if (event.tool.name !== "bash") return { action: "continue" };
+  pi.on("tool_call", async (event, _ctx) => {
+    if (event.toolName !== "bash") return undefined;
 
-    const command = event.input?.command || event.input?.content || "";
+    const command = (event.input.command ?? "") as string;
 
-    // Block dangerous commands
-    for (const pattern of blockedPatterns) {
-      if (command.includes(pattern)) {
-        return {
-          action: "block",
-          message: `Blocked dangerous command pattern: "${pattern}"`,
-        };
-      }
+    const dangerous = matchedDangerousPattern(command);
+    if (dangerous) {
+      return { block: true, reason: `Blocked dangerous command pattern: "${dangerous}"` };
     }
 
-    // Block env exfiltration attempts
-    for (const pattern of blockedEnvCommands) {
-      if (command.includes(pattern)) {
-        return {
-          action: "block",
-          message: `Blocked environment variable access attempt`,
-        };
-      }
+    const envLeak = matchedEnvExfiltrationPattern(command);
+    if (envLeak) {
+      return { block: true, reason: "Blocked environment variable access attempt" };
     }
 
-    return { action: "continue" };
+    return undefined;
   });
 
   // Intercept write/edit tool calls for path validation
-  for (const toolName of ["write", "edit"]) {
-    pi.on("toolCall", async (event, ctx) => {
-      if (event.tool.name !== toolName) return { action: "continue" };
+  pi.on("tool_call", async (event, _ctx) => {
+    if (event.toolName !== "write" && event.toolName !== "edit")
+      return undefined;
 
-      const filePath = event.input?.file_path || event.input?.path || "";
-      if (allowedPaths.length > 0 && filePath) {
-        const path = require("path");
-        const clean = path.resolve(filePath);
-        const allowed = allowedPaths.some((ap: string) => {
-          const expanded = ap.replace("~", process.env.HOME || "");
-          return clean.startsWith(path.resolve(expanded));
-        });
-        if (!allowed) {
-          return {
-            action: "block",
-            message: `Path "${filePath}" is outside allowed paths`,
-          };
-        }
+    const filePath = (event.input.path ?? "") as string;
+    if (allowedPaths.length > 0 && filePath) {
+      const clean = path.resolve(filePath);
+      const allowed = allowedPaths.some((ap: string) => {
+        const expanded = ap.replace("~", process.env.HOME ?? "");
+        return clean.startsWith(path.resolve(expanded));
+      });
+      if (!allowed) {
+        return {
+          block: true,
+          reason: `Path "${filePath}" is outside allowed paths`,
+        };
       }
-      return { action: "continue" };
-    });
-  }
+    }
+
+    return undefined;
+  });
 };
 
 export default securityPolicy;

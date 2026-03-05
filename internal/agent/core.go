@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/MarcoMruz/agentloop/internal/bridge"
 	"github.com/MarcoMruz/agentloop/internal/config"
+	"github.com/google/uuid"
 )
 
 type RunStats struct {
@@ -43,25 +43,35 @@ type SessionInterface interface {
 }
 
 type Core struct {
-	piCfg  config.PiConfig
-	secCfg config.SecurityConfig
-	cb     Callbacks
+	piCfg   config.PiConfig
+	secCfg  config.SecurityConfig
+	hitlCfg config.HITLConfig
+	pb      *PromptBuilder
+	cb      Callbacks
 }
 
-func New(piCfg config.PiConfig, secCfg config.SecurityConfig, cb Callbacks) *Core {
-	return &Core{piCfg: piCfg, secCfg: secCfg, cb: cb}
+func New(piCfg config.PiConfig, secCfg config.SecurityConfig, hitlCfg config.HITLConfig, pb *PromptBuilder, cb Callbacks) *Core {
+	return &Core{piCfg: piCfg, secCfg: secCfg, hitlCfg: hitlCfg, pb: pb, cb: cb}
 }
 
-func (c *Core) Run(ctx context.Context, memoryContext string, task string, sess SessionInterface) RunResult {
+func (c *Core) Run(ctx context.Context, userId string, task string, sess SessionInterface) RunResult {
 	start := time.Now()
 	var output strings.Builder
 	var toolsUsed []string
 
-	// Build full prompt with memory prefix
-	fullPrompt := c.buildPrompt(memoryContext, task)
+	slog.Debug("Core.Run starting", "task_len", len(task), "userId", userId)
+
+	// Build the full prompt: memory context + skills + task
+	skillNames := c.pb.DetectSkills(task)
+	fullPrompt, err := c.pb.Build(userId, task, skillNames)
+	if err != nil {
+		slog.Warn("Core.Run: prompt build error, falling back to raw task", "err", err)
+		fullPrompt = task
+	}
+	slog.Debug("Core.Run after buildPrompt", "prompt_len", len(fullPrompt), "skills", skillNames)
 
 	// Create pi bridge
-	b := bridge.New(c.piCfg, c.secCfg)
+	b := bridge.New(c.piCfg, c.secCfg, c.hitlCfg)
 
 	doneCh := make(chan struct{})
 	var doneOnce sync.Once
@@ -77,22 +87,30 @@ func (c *Core) Run(ctx context.Context, memoryContext string, task string, sess 
 			case "text_delta":
 				delta := event.AssistantMessageEvent.Delta
 				output.WriteString(delta)
-				if c.cb.OnText != nil { c.cb.OnText(delta) }
+				if c.cb.OnText != nil {
+					c.cb.OnText(delta)
+				}
 			case "error":
-				if c.cb.OnError != nil { c.cb.OnError("LLM streaming error") }
+				if c.cb.OnError != nil {
+					c.cb.OnError("LLM streaming error")
+				}
 				closeDone()
 			}
 
 		case "tool_execution_start":
 			toolsUsed = append(toolsUsed, event.ToolName)
-			if c.cb.OnToolUse != nil { c.cb.OnToolUse(event.ToolName, event.Args) }
+			if c.cb.OnToolUse != nil {
+				c.cb.OnToolUse(event.ToolName, event.Args)
+			}
 
 		case "tool_execution_end":
 			if c.cb.OnToolResult != nil {
 				var outText string
 				if event.Result != nil {
 					for _, block := range event.Result.Content {
-						if block.Type == "text" { outText += block.Text }
+						if block.Type == "text" {
+							outText += block.Text
+						}
 					}
 				}
 				c.cb.OnToolResult(event.ToolName, outText, !event.IsError)
@@ -104,8 +122,12 @@ func (c *Core) Run(ctx context.Context, memoryContext string, task string, sess 
 		case "auto_retry_end":
 			if !event.Success {
 				errMsg := event.FinalError
-				if errMsg == "" { errMsg = "agent failed after retries" }
-				if c.cb.OnError != nil { c.cb.OnError(errMsg) }
+				if errMsg == "" {
+					errMsg = "agent failed after retries"
+				}
+				if c.cb.OnError != nil {
+					c.cb.OnError(errMsg)
+				}
 				closeDone()
 			}
 		}
@@ -144,7 +166,9 @@ func (c *Core) Run(ctx context.Context, memoryContext string, task string, sess 
 	workDir := "" // session workDir passed via context
 	if err := b.Start(ctx, workDir); err != nil {
 		errMsg := fmt.Sprintf("failed to start pi: %v", err)
-		if c.cb.OnError != nil { c.cb.OnError(errMsg) }
+		if c.cb.OnError != nil {
+			c.cb.OnError(errMsg)
+		}
 		return RunResult{Error: errMsg}
 	}
 	defer b.Stop()
@@ -152,7 +176,9 @@ func (c *Core) Run(ctx context.Context, memoryContext string, task string, sess 
 	// Send prompt
 	if err := b.Prompt(ctx, "task", fullPrompt); err != nil {
 		errMsg := fmt.Sprintf("failed to send prompt: %v", err)
-		if c.cb.OnError != nil { c.cb.OnError(errMsg) }
+		if c.cb.OnError != nil {
+			c.cb.OnError(errMsg)
+		}
 		return RunResult{Error: errMsg}
 	}
 
@@ -170,7 +196,9 @@ func (c *Core) Run(ctx context.Context, memoryContext string, task string, sess 
 				ToolsUsed: unique(toolsUsed),
 				Stats:     stats,
 			}
-			if c.cb.OnDone != nil { c.cb.OnDone(result.Output, stats) }
+			if c.cb.OnDone != nil {
+				c.cb.OnDone(result.Output, stats)
+			}
 			return result
 
 		case <-b.Done():
@@ -188,11 +216,15 @@ func (c *Core) Run(ctx context.Context, memoryContext string, task string, sess 
 					ToolsUsed: unique(toolsUsed),
 					Stats:     stats,
 				}
-				if c.cb.OnDone != nil { c.cb.OnDone(result.Output, stats) }
+				if c.cb.OnDone != nil {
+					c.cb.OnDone(result.Output, stats)
+				}
 				return result
 			default:
 				errMsg := "pi process exited unexpectedly"
-				if c.cb.OnError != nil { c.cb.OnError(errMsg) }
+				if c.cb.OnError != nil {
+					c.cb.OnError(errMsg)
+				}
 				return RunResult{Output: output.String(), Error: errMsg, ToolsUsed: unique(toolsUsed)}
 			}
 
@@ -210,33 +242,16 @@ func (c *Core) Run(ctx context.Context, memoryContext string, task string, sess 
 	}
 }
 
-// buildPrompt assembles the full prompt with memory context as a stable prefix.
-//
-// Structure (optimized for Anthropic prompt caching):
-//   1. <memory> block (user profile + compacted history) — STABLE PREFIX
-//   2. Task text — DYNAMIC
-//
-// The memory block changes slowly (profile rarely, history compacted daily),
-// so Anthropic's prompt cache can reuse the prefix across calls.
-func (c *Core) buildPrompt(memoryContext string, task string) string {
-	var parts []string
-
-	if memoryContext != "" {
-		parts = append(parts, fmt.Sprintf("<memory>\n%s\n</memory>", memoryContext))
-	}
-
-	parts = append(parts, task)
-	return strings.Join(parts, "\n\n")
-}
-
 func estimateTokens(text string) int { return len(text) / 4 }
 
 func unique(ss []string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, s := range ss {
-		if !seen[s] { seen[s] = true; out = append(out, s) }
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
 	}
 	return out
 }
-

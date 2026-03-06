@@ -1,0 +1,10 @@
+{
+  "name": "agentloop-extensions",
+  "version": "1.0.0",
+  "type": "module",
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.54.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

@@ -20,7 +20,23 @@ import (
 var version = "dev"
 
 func main() {
-	cfg, err := config.Load(config.DefaultConfigPath())
+	// Allow overriding config path via --config flag or AGENTLOOP_CONFIG env var
+	cfgPath := config.DefaultConfigPath()
+	if v := os.Getenv("AGENTLOOP_CONFIG"); v != "" {
+		cfgPath = v
+	}
+	for i, arg := range os.Args[1:] {
+		if arg == "--config" && i+1 < len(os.Args[1:]) {
+			cfgPath = os.Args[i+2]
+			break
+		}
+		if len(arg) > 9 && arg[:9] == "--config=" {
+			cfgPath = arg[9:]
+			break
+		}
+	}
+
+	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		os.Exit(1)
@@ -44,10 +60,10 @@ func main() {
 	)
 
 	// Initialize skills registry
-	_ = skills.NewRegistry(cfg.Skills.SkillDirs)
+	sk := skills.NewRegistry(cfg.Skills.SkillDirs)
 
 	// Initialize session manager
-	sm := session.NewManager(cfg, v, mem)
+	sm := session.NewManager(cfg, v, mem, sk)
 
 	// Initialize server
 	handler := server.NewHandler(sm, mem)

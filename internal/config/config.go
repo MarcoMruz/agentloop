@@ -48,30 +48,31 @@ type SessionConfig struct {
 }
 
 type HITLConfig struct {
-	AlwaysPauseTools []string `mapstructure:"always_pause_tools"`
-	TimeoutSeconds   int      `mapstructure:"timeout_seconds"`
-	TimeoutAction    string   `mapstructure:"timeout_action"`
+	AlwaysPauseTools   []string `mapstructure:"always_pause_tools"`
+	TimeoutSeconds     int      `mapstructure:"timeout_seconds"`
+	TimeoutAction      string   `mapstructure:"timeout_action"`
+	ForceHITLKeywords  []string `mapstructure:"force_hitl_keywords"`
 }
 
 type SecurityConfig struct {
-	AllowedPaths             []string `mapstructure:"allowed_paths"`
-	BlockedEnvPrefixes       []string `mapstructure:"blocked_env_prefixes"`
-	BlockedCIDRs             []string `mapstructure:"blocked_cidrs"`
-	DockerAllowedSubcommands []string `mapstructure:"docker_allowed_subcommands"`
-	DockerBlockedVolumePaths []string `mapstructure:"docker_blocked_volume_paths"`
+	AllowedPaths             []string        `mapstructure:"allowed_paths"`
+	BlockedEnvPrefixes       []string        `mapstructure:"blocked_env_prefixes"`
+	BlockedCIDRs             []string        `mapstructure:"blocked_cidrs"`
+	DockerAllowedSubcommands []string        `mapstructure:"docker_allowed_subcommands"`
+	DockerBlockedVolumePaths []string        `mapstructure:"docker_blocked_volume_paths"`
 	Injection                InjectionConfig `mapstructure:"injection"`
 }
 
 type InjectionConfig struct {
-	EnableProtection    bool     `mapstructure:"enable_protection"`
-	WhitelistSources    []string `mapstructure:"whitelist_sources"`
-	BlockedKeywords     []string `mapstructure:"blocked_keywords"`
-	SanitizeMemory      bool     `mapstructure:"sanitize_memory"`
-	RequireApproval     []string `mapstructure:"require_approval"`
-	ApprovalTier        string   `mapstructure:"approval_tier"`
-	SensitivePatterns   []string `mapstructure:"sensitive_patterns"`
-	MaxContentLength    int      `mapstructure:"max_content_length"`
-	DetectionThreshold  float64  `mapstructure:"detection_threshold"`
+	EnableProtection   bool     `mapstructure:"enable_protection"`
+	WhitelistSources   []string `mapstructure:"whitelist_sources"`
+	BlockedKeywords    []string `mapstructure:"blocked_keywords"`
+	SanitizeMemory     bool     `mapstructure:"sanitize_memory"`
+	RequireApproval    []string `mapstructure:"require_approval"`
+	ApprovalTier       string   `mapstructure:"approval_tier"`
+	SensitivePatterns  []string `mapstructure:"sensitive_patterns"`
+	MaxContentLength   int      `mapstructure:"max_content_length"`
+	DetectionThreshold float64  `mapstructure:"detection_threshold"`
 }
 
 type SkillsConfig struct {
@@ -110,9 +111,10 @@ func Defaults() *Config {
 			EvictLRU:       true,
 		},
 		HITL: HITLConfig{
-			AlwaysPauseTools: []string{"docker", "git push", "rm -r", "curl", "wget"},
-			TimeoutSeconds:   300,
-			TimeoutAction:    "deny",
+			AlwaysPauseTools:  []string{"docker", "git push", "rm -r", "curl", "wget"},
+			TimeoutSeconds:    300,
+			TimeoutAction:     "deny",
+			ForceHITLKeywords: []string{"sudo", "chmod", "chown", "systemctl", "npm install", "pip install", "yarn add"},
 		},
 		Security: SecurityConfig{
 			AllowedPaths:             []string{"~/projects", "~/tmp", "~/agentloop-sandbox"},

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/user/agentloop/internal/config"
+	"github.com/MarcoMruz/agentloop/internal/config"
 )
 
 func TestBuildSafeEnv(t *testing.T) {
@@ -24,15 +24,19 @@ func TestBuildSafeEnv(t *testing.T) {
 		SanitizeMemory:   true,
 	}
 
-	env := buildSafeEnv([]string{"ANTHROPIC_", "OPENAI_"}, injectionCfg)
-	
+	hitlCfg := config.HITLConfig{
+		ForceHITLKeywords: []string{"sudo", "chmod", "systemctl"},
+	}
+
+	env := buildSafeEnv([]string{"ANTHROPIC_", "OPENAI_"}, injectionCfg, hitlCfg)
+
 	// Check that sensitive env vars are stripped
 	for _, e := range env {
 		if strings.HasPrefix(e, "ANTHROPIC_") {
 			t.Fatal("SECURITY: sensitive env var leaked")
 		}
 	}
-	
+
 	// Check that safe vars are preserved
 	found := false
 	for _, e := range env {
@@ -46,12 +50,13 @@ func TestBuildSafeEnv(t *testing.T) {
 
 	// Check injection protection env vars are set
 	expectedVars := map[string]bool{
-		"AGENTLOOP_INJECTION_PROTECTION=true":         false,
+		"AGENTLOOP_INJECTION_PROTECTION=true":              false,
 		"AGENTLOOP_WHITELIST_SOURCES=~/projects,~/sandbox": false,
-		"AGENTLOOP_BLOCKED_KEYWORDS=test-keyword":     false,
-		"AGENTLOOP_MAX_CONTENT_LENGTH=10000":          false,
-		"AGENTLOOP_APPROVAL_TIER=owner":               false,
-		"AGENTLOOP_SANITIZE_MEMORY=true":              false,
+		"AGENTLOOP_BLOCKED_KEYWORDS=test-keyword":          false,
+		"AGENTLOOP_MAX_CONTENT_LENGTH=10000":               false,
+		"AGENTLOOP_APPROVAL_TIER=owner":                    false,
+		"AGENTLOOP_SANITIZE_MEMORY=true":                   false,
+		"AGENTLOOP_HITL_FORCE_KEYWORDS=sudo,chmod,systemctl": false,
 	}
 
 	for _, envVar := range env {

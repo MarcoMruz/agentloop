@@ -9,6 +9,7 @@ import (
 	"github.com/MarcoMruz/agentloop/internal/agent"
 	"github.com/MarcoMruz/agentloop/internal/config"
 	"github.com/MarcoMruz/agentloop/internal/memory"
+	"github.com/MarcoMruz/agentloop/internal/skills"
 	"github.com/MarcoMruz/agentloop/internal/vault"
 )
 
@@ -17,33 +18,36 @@ type Broadcaster interface {
 }
 
 type StartRequest struct {
-	UserID        string
-	Text          string
-	WorkDir       string
-	Source        string // "cli", "slack", etc.
-	MemoryContext string
-	Broadcaster   Broadcaster
-	HITLNotifier  Broadcaster // same interface, routes hitl_request events
+	UserID       string
+	Text         string
+	WorkDir      string
+	Source       string // "cli", "slack", etc.
+	Broadcaster  Broadcaster
+	HITLNotifier Broadcaster // same interface, routes hitl_request events
 }
 
 type Manager struct {
 	cfg      config.SessionConfig
 	piCfg    config.PiConfig
 	secCfg   config.SecurityConfig
+	hitlCfg  config.HITLConfig
 	vault    *vault.Vault
 	memory   *memory.Engine
+	skills   *skills.Registry
 	sessions map[string]*Session
 	userMap  map[string][]string // userId → active sessionIds
 	mu       sync.RWMutex
 }
 
-func NewManager(cfg *config.Config, v *vault.Vault, mem *memory.Engine) *Manager {
+func NewManager(cfg *config.Config, v *vault.Vault, mem *memory.Engine, sk *skills.Registry) *Manager {
 	return &Manager{
 		cfg:      cfg.Sessions,
 		piCfg:    cfg.Pi,
 		secCfg:   cfg.Security,
+		hitlCfg:  cfg.HITL,
 		vault:    v,
 		memory:   mem,
+		skills:   sk,
 		sessions: make(map[string]*Session),
 		userMap:  make(map[string][]string),
 	}
@@ -76,7 +80,8 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 	go func() {
 		defer m.cleanupSession(sess)
 
-		agentCore := agent.New(m.piCfg, m.secCfg, agent.Callbacks{
+		pb := agent.NewPromptBuilder(m.memory, m.skills)
+		agentCore := agent.New(m.piCfg, m.secCfg, m.hitlCfg, pb, agent.Callbacks{
 			OnText: func(content string) {
 				sess.Touch()
 				req.Broadcaster.Broadcast(sess.ID, "event.text", map[string]any{
@@ -117,7 +122,7 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 			},
 		})
 
-		result := agentCore.Run(ctx, req.MemoryContext, req.Text, sess)
+		result := agentCore.Run(ctx, req.UserID, req.Text, sess)
 		sess.SetResult(result)
 
 		// Persist to vault

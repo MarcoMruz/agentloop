@@ -25,24 +25,26 @@ type HITLHandler func(event RPCEvent) (bool, error)
 
 // PiBridge manages the pi subprocess and RPC communication.
 type PiBridge struct {
-	cfg    config.PiConfig
-	secCfg config.SecurityConfig
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout io.ReadCloser
-	stderr io.ReadCloser
-	mu     sync.Mutex
+	cfg     config.PiConfig
+	secCfg  config.SecurityConfig
+	hitlCfg config.HITLConfig
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	stdout  io.ReadCloser
+	stderr  io.ReadCloser
+	mu      sync.Mutex
 	onEvent EventHandler
 	onHITL  HITLHandler
-	done   chan struct{}
+	done    chan struct{}
 }
 
 // New creates a PiBridge but does not start it. Call Start() separately.
-func New(piCfg config.PiConfig, secCfg config.SecurityConfig) *PiBridge {
+func New(piCfg config.PiConfig, secCfg config.SecurityConfig, hitlCfg config.HITLConfig) *PiBridge {
 	return &PiBridge{
-		cfg:  piCfg,
-		secCfg: secCfg,
-		done: make(chan struct{}),
+		cfg:     piCfg,
+		secCfg:  secCfg,
+		hitlCfg: hitlCfg,
+		done:    make(chan struct{}),
 	}
 }
 
@@ -92,7 +94,7 @@ func (b *PiBridge) Start(ctx context.Context, workDir string) error {
 	b.cmd.Dir = workDir
 
 	// SECURITY: Build sanitized environment for pi subprocess
-	b.cmd.Env = buildSafeEnv(b.secCfg.BlockedEnvPrefixes, b.secCfg.Injection)
+	b.cmd.Env = buildSafeEnv(b.secCfg.BlockedEnvPrefixes, b.secCfg.Injection, b.hitlCfg)
 
 	var err error
 	b.stdin, err = b.cmd.StdinPipe()
@@ -234,8 +236,8 @@ func (b *PiBridge) readStderr() {
 	}
 }
 
-// buildSafeEnv creates an environment with sensitive vars stripped and injection protection vars added.
-func buildSafeEnv(blockedPrefixes []string, injectionCfg config.InjectionConfig) []string {
+// buildSafeEnv creates an environment with sensitive vars stripped and config vars injected for extensions.
+func buildSafeEnv(blockedPrefixes []string, injectionCfg config.InjectionConfig, hitlCfg config.HITLConfig) []string {
 	var safe []string
 	for _, envVar := range os.Environ() {
 		parts := strings.SplitN(envVar, "=", 2)
@@ -269,6 +271,11 @@ func buildSafeEnv(blockedPrefixes []string, injectionCfg config.InjectionConfig)
 		}
 	} else {
 		safe = append(safe, "AGENTLOOP_INJECTION_PROTECTION=false")
+	}
+
+	// Inject HITL force keywords for the force-hitl extension
+	if len(hitlCfg.ForceHITLKeywords) > 0 {
+		safe = append(safe, "AGENTLOOP_HITL_FORCE_KEYWORDS="+strings.Join(hitlCfg.ForceHITLKeywords, ","))
 	}
 
 	return safe

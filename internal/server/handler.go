@@ -35,17 +35,13 @@ func (h *Handler) Handle(ctx context.Context, client *Client, req JSONRPCRequest
 			return nil, &RPCError{Code: -32602, Message: "userId and text required"}
 		}
 
-		// Build memory context
-		memCtx, _ := h.memory.GetContextForUser(p.UserID)
-
 		sess, err := h.sessions.StartSession(ctx, session.StartRequest{
-			UserID:        p.UserID,
-			Text:          p.Text,
-			WorkDir:       p.WorkDir,
-			Source:        p.Source,
-			MemoryContext: memCtx,
-			Broadcaster:   h.server,
-			HITLNotifier:  h.server,
+			UserID:       p.UserID,
+			Text:         p.Text,
+			WorkDir:      p.WorkDir,
+			Source:       p.Source,
+			Broadcaster:  h.server,
+			HITLNotifier: h.server,
 		})
 		if err != nil {
 			return nil, &RPCError{Code: -32000, Message: err.Error()}

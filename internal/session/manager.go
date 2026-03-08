@@ -98,11 +98,13 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 					"sessionId": sess.ID, "toolName": name, "output": truncate(output, 2000), "success": success,
 				})
 			},
-			OnHITLRequest: func(requestId string, toolName string, details string) {
-				sess.SetPendingHITL(requestId)
+			OnHITLRequest: func(details agent.HITLRequestDetails) {
+				sess.SetPendingHITL(details.RequestId)
 				req.HITLNotifier.Broadcast(sess.ID, "event.hitl_request", map[string]any{
-					"sessionId": sess.ID, "requestId": requestId,
-					"toolName": toolName, "details": details,
+					"sessionId": sess.ID, "requestId": details.RequestId,
+					"toolName": details.ToolName, "details": details.Title,
+					"command": details.Command, "workDir": details.WorkDir,
+					"rule": details.Rule, "method": details.Method,
 					"options": []string{"approve", "deny", "abort"},
 				})
 			},
@@ -122,7 +124,7 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 			},
 		})
 
-		result := agentCore.Run(ctx, req.UserID, req.Text, sess)
+		result := agentCore.Run(ctx, req.UserID, req.Text, req.WorkDir, sess)
 		sess.SetResult(result)
 
 		// Persist to vault

@@ -26,11 +26,21 @@ type RunResult struct {
 	Stats     RunStats
 }
 
+type HITLRequestDetails struct {
+	RequestId   string
+	ToolName    string
+	Method      string
+	Title       string
+	Command     string  // Full command or description
+	WorkDir     string  // Current working directory
+	Rule        string  // Security rule that triggered this
+}
+
 type Callbacks struct {
 	OnText        func(content string)
 	OnToolUse     func(name string, input map[string]any)
 	OnToolResult  func(name string, output string, success bool)
-	OnHITLRequest func(requestId string, toolName string, details string)
+	OnHITLRequest func(details HITLRequestDetails)
 	OnDone        func(output string, stats RunStats)
 	OnError       func(msg string)
 }
@@ -54,7 +64,48 @@ func New(piCfg config.PiConfig, secCfg config.SecurityConfig, hitlCfg config.HIT
 	return &Core{piCfg: piCfg, secCfg: secCfg, hitlCfg: hitlCfg, pb: pb, cb: cb}
 }
 
-func (c *Core) Run(ctx context.Context, userId string, task string, sess SessionInterface) RunResult {
+// parseHITLDetails extracts command and rule information from HITL event details
+func parseHITLDetails(title, method string) (command, rule string) {
+	// Extract command from common patterns in title
+	if strings.Contains(title, "Full command:") {
+		parts := strings.Split(title, "Full command:")
+		if len(parts) > 1 {
+			commandPart := strings.Split(parts[1], "\n")[0]
+			command = strings.TrimSpace(commandPart)
+		}
+	}
+	
+	// Extract rule from title patterns
+	if strings.Contains(title, "dangerous pattern") {
+		if start := strings.Index(title, `"`); start != -1 {
+			if end := strings.Index(title[start+1:], `"`); end != -1 {
+				rule = "Dangerous Pattern: " + title[start+1:start+1+end]
+			}
+		}
+	} else if strings.Contains(title, "environment variables") {
+		if start := strings.Index(title, `"`); start != -1 {
+			if end := strings.Index(title[start+1:], `"`); end != -1 {
+				rule = "Environment Access: " + title[start+1:start+1+end]
+			}
+		}
+	} else if strings.Contains(title, "Docker command") {
+		rule = "Docker Command Approval"
+	} else if strings.Contains(title, "outside allowed paths") {
+		rule = "Path Restriction"
+	}
+
+	// Fallback to basic method/title if no specific parsing worked
+	if command == "" {
+		command = title
+	}
+	if rule == "" {
+		rule = method
+	}
+
+	return command, rule
+}
+
+func (c *Core) Run(ctx context.Context, userId string, task string, workDir string, sess SessionInterface) RunResult {
 	start := time.Now()
 	var output strings.Builder
 	var toolsUsed []string
@@ -137,12 +188,24 @@ func (c *Core) Run(ctx context.Context, userId string, task string, sess Session
 	// HITL handler: route through session's HITL resolution
 	b.SetHITLHandler(func(event bridge.RPCEvent) (bool, error) {
 		requestId := uuid.New().String()[:8]
-		toolName := event.Title
-		details := fmt.Sprintf("%s: %s", event.Method, event.Title)
+		
+		// Extract command details from the title/method for enhanced display
+		command, rule := parseHITLDetails(event.Title, event.Method)
+
+		// Build detailed HITL request
+		details := HITLRequestDetails{
+			RequestId: requestId,
+			ToolName:  event.Title,
+			Method:    event.Method, 
+			Title:     event.Title,
+			Command:   command,
+			WorkDir:   workDir,
+			Rule:      rule,
+		}
 
 		// Notify client (Slack/CLI) about HITL request
 		if c.cb.OnHITLRequest != nil {
-			c.cb.OnHITLRequest(requestId, toolName, details)
+			c.cb.OnHITLRequest(details)
 		}
 
 		// Wait for resolution from client (blocks until approve/deny/abort)
@@ -163,7 +226,6 @@ func (c *Core) Run(ctx context.Context, userId string, task string, sess Session
 	})
 
 	// Start pi
-	workDir := "" // session workDir passed via context
 	if err := b.Start(ctx, workDir); err != nil {
 		errMsg := fmt.Sprintf("failed to start pi: %v", err)
 		if c.cb.OnError != nil {

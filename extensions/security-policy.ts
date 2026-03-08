@@ -32,26 +32,56 @@ const securityPolicy: ExtensionFactory = (pi) => {
   }
 
   // Intercept bash tool calls
-  pi.on("tool_call", async (event, _ctx) => {
+  pi.on("tool_call", async (event, ctx) => {
     if (event.toolName !== "bash") return undefined;
 
     const command = (event.input.command ?? "") as string;
 
     const dangerous = matchedDangerousPattern(command);
     if (dangerous) {
-      return { block: true, reason: `Blocked dangerous command pattern: "${dangerous}"` };
+      // Check if UI is available for HITL approval
+      if (!ctx.hasUI) {
+        return { block: true, reason: `Blocked dangerous pattern "${dangerous}" (no UI available)` };
+      }
+
+      // Request human approval with detailed information
+      const confirmed = await ctx.ui.confirm(
+        "Dangerous Command Detected",
+        `Command contains potentially dangerous pattern: "${dangerous}"\n\nFull command:\n${command}\n\nAllow execution?`
+      );
+
+      if (!confirmed) {
+        return { block: true, reason: `Dangerous command denied by user: "${dangerous}"` };
+      }
+
+      return undefined; // Allow after approval
     }
 
     const envLeak = matchedEnvExfiltrationPattern(command);
     if (envLeak) {
-      return { block: true, reason: "Blocked environment variable access attempt" };
+      // Check if UI is available for HITL approval
+      if (!ctx.hasUI) {
+        return { block: true, reason: "Blocked environment variable access (no UI available)" };
+      }
+
+      // Request human approval with detailed information
+      const confirmed = await ctx.ui.confirm(
+        "Environment Access Detected",
+        `Command attempts to access environment variables: "${envLeak}"\n\nFull command:\n${command}\n\nAllow execution?`
+      );
+
+      if (!confirmed) {
+        return { block: true, reason: `Environment access denied by user: "${envLeak}"` };
+      }
+
+      return undefined; // Allow after approval
     }
 
     return undefined;
   });
 
   // Intercept write/edit tool calls for path validation
-  pi.on("tool_call", async (event, _ctx) => {
+  pi.on("tool_call", async (event, ctx) => {
     if (event.toolName !== "write" && event.toolName !== "edit")
       return undefined;
 
@@ -63,10 +93,28 @@ const securityPolicy: ExtensionFactory = (pi) => {
         return clean.startsWith(path.resolve(expanded));
       });
       if (!allowed) {
-        return {
-          block: true,
-          reason: `Path "${filePath}" is outside allowed paths`,
-        };
+        // Check if UI is available for HITL approval
+        if (!ctx.hasUI) {
+          return {
+            block: true,
+            reason: `Path "${filePath}" outside allowed paths (no UI available)`,
+          };
+        }
+
+        // Request human approval with detailed information
+        const confirmed = await ctx.ui.confirm(
+          "File Path Access",
+          `File operation outside allowed paths:\n\nPath: ${filePath}\nTool: ${event.toolName}\n\nAllowed paths: ${allowedPaths.join(", ")}\n\nAllow access?`
+        );
+
+        if (!confirmed) {
+          return {
+            block: true,
+            reason: `Path access denied by user: "${filePath}"`,
+          };
+        }
+
+        return undefined; // Allow after approval
       }
     }
 

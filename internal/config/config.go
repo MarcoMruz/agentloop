@@ -61,6 +61,22 @@ type SecurityConfig struct {
 	DockerAllowedSubcommands []string        `mapstructure:"docker_allowed_subcommands"`
 	DockerBlockedVolumePaths []string        `mapstructure:"docker_blocked_volume_paths"`
 	Injection                InjectionConfig `mapstructure:"injection"`
+	PolicyMode               string          `mapstructure:"policy_mode"`
+	Tiers                    SecurityTiers   `mapstructure:"tiers"`
+}
+
+type SecurityTiers struct {
+	SafeOperations   TierOperations `mapstructure:"safe_operations"`
+	LoggedOperations TierOperations `mapstructure:"logged_operations"`
+	HITLRequired     TierOperations `mapstructure:"hitl_required"`
+	AlwaysBlocked    TierOperations `mapstructure:"always_blocked"`
+}
+
+type TierOperations struct {
+	BashPatterns    []string `mapstructure:"bash_patterns"`
+	Tools           []string `mapstructure:"tools"`
+	DockerCommands  []string `mapstructure:"docker_commands"`
+	VolumeMounts    []string `mapstructure:"volume_mounts"`
 }
 
 type InjectionConfig struct {
@@ -122,6 +138,7 @@ func Defaults() *Config {
 			BlockedCIDRs:             []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10"},
 			DockerAllowedSubcommands: []string{"ps", "logs", "images", "build", "compose", "inspect", "stats", "top", "exec", "run", "stop", "start", "restart", "rm"},
 			DockerBlockedVolumePaths: []string{"/etc", "/var", "/root", "/proc", "/sys", "/dev"},
+			PolicyMode:               "selective",
 			Injection: InjectionConfig{
 				EnableProtection: true,
 				WhitelistSources: []string{"~/projects", "~/agentloop-sandbox", "~/.config/agentloop"},
@@ -159,6 +176,79 @@ func Defaults() *Config {
 				},
 				MaxContentLength:   50000,
 				DetectionThreshold: 0.7,
+			},
+			Tiers: SecurityTiers{
+				SafeOperations: TierOperations{
+					BashPatterns: []string{
+						"^ls\\b",
+						"^cat\\b",
+						"^grep\\b",
+						"^find\\b",
+						"^pwd$",
+						"^echo\\b",
+						"^which\\b",
+						"^git log",
+						"^git status",
+						"^git diff",
+						"^npm list",
+						"^yarn list",
+						"^head\\b",
+						"^tail\\b",
+						"^wc\\b",
+						"^sort\\b",
+						"^uniq\\b",
+					},
+					Tools:          []string{"read"},
+					DockerCommands: []string{"ps", "logs", "images", "inspect", "stats", "top"},
+				},
+				LoggedOperations: TierOperations{
+					BashPatterns: []string{
+						"^git checkout",
+						"^git branch",
+						"^npm install",
+						"^yarn install",
+						"^mkdir\\b",
+						"^touch\\b",
+						"^cp\\b",
+						"^mv\\b",
+						"^go build",
+						"^go test",
+						"^cargo build",
+						"^cargo test",
+					},
+					Tools:          []string{"write", "edit"},
+					DockerCommands: []string{"build", "run", "exec", "start"},
+				},
+				HITLRequired: TierOperations{
+					BashPatterns: []string{
+						"\\bsudo\\b",
+						"\\bchmod\\b",
+						"\\bchown\\b",
+						"\\brm\\b.*-r",
+						"\\bsystemctl\\b",
+						"\\bservice\\b",
+						"\\busermod\\b",
+						"\\buserdel\\b",
+						"\\buseradd\\b",
+						"curl.*-X.*POST",
+						"wget.*--post",
+					},
+					DockerCommands: []string{"rm", "stop", "restart", "compose"},
+				},
+				AlwaysBlocked: TierOperations{
+					BashPatterns: []string{
+						"rm -rf /",
+						"mkfs",
+						"> /dev/sd",
+						"dd if=",
+						":(){ :|:& };:",
+						"\\bformat\\b.*C:",
+						"shutdown",
+						"reboot",
+						"halt",
+					},
+					VolumeMounts: []string{"/etc", "/var", "/root", "/proc", "/sys", "/dev"},
+				},
 			},
 		},
 		Skills:  SkillsConfig{SkillDirs: []string{"~/.local/share/agentloop/vault/skills"}},

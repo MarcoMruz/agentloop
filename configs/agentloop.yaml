@@ -96,6 +96,102 @@ security:
     - /proc
     - /sys
     - /dev
+  
+  # Tiered Security Policy (NEW)
+  policy_mode: selective # strict, selective, permissive
+  
+  tiers:
+    safe_operations:
+      # Commands that run without approval
+      bash_patterns:
+        - "^ls\\b"
+        - "^cat\\b"
+        - "^grep\\b" 
+        - "^find\\b"
+        - "^pwd$"
+        - "^echo\\b"
+        - "^which\\b"
+        - "^git log"
+        - "^git status"
+        - "^git diff"
+        - "^head\\b"
+        - "^tail\\b"
+        - "^wc\\b"
+        - "^sort\\b"
+        - "^uniq\\b"
+      tools:
+        - read
+      docker_commands:
+        - ps
+        - logs
+        - images
+        - inspect
+        - stats
+        - top
+        
+    logged_operations:
+      # Commands that run but are logged for audit
+      bash_patterns:
+        - "^git checkout"
+        - "^git branch"
+        - "^npm install"
+        - "^yarn install"
+        - "^mkdir\\b"
+        - "^touch\\b"
+        - "^cp\\b"
+        - "^mv\\b"
+        - "^go build"
+        - "^go test"
+        - "^cargo build"
+        - "^cargo test"
+      tools:
+        - write
+        - edit
+      docker_commands:
+        - build
+        - run
+        - exec
+        - start
+        
+    hitl_required:
+      # Commands requiring human approval
+      bash_patterns:
+        - "\\bsudo\\b"
+        - "\\bchmod\\b"
+        - "\\bchown\\b"
+        - "\\brm\\b.*-r"
+        - "\\bsystemctl\\b"
+        - "\\bservice\\b"
+        - "\\busermod\\b"
+        - "\\buserdel\\b"
+        - "\\buseradd\\b"
+        - "curl.*-X.*POST"
+        - "wget.*--post"
+      docker_commands:
+        - rm
+        - stop
+        - restart
+        - compose
+        
+    always_blocked:
+      # Commands that are never allowed
+      bash_patterns:
+        - "rm -rf /"
+        - "mkfs"
+        - "> /dev/sd"
+        - "dd if="
+        - ":(){ :|:& };:"
+        - "\\bformat\\b.*C:"
+        - "shutdown"
+        - "reboot"
+        - "halt"
+      volume_mounts:
+        - "/etc"
+        - "/var"
+        - "/root"
+        - "/proc"
+        - "/sys" 
+        - "/dev"
   injection:
     enable_protection: true
     whitelist_sources:

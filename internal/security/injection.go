@@ -9,15 +9,16 @@ import (
 
 // InjectionConfig holds prompt injection security configuration
 type InjectionConfig struct {
-	EnableProtection    bool     `mapstructure:"enable_protection"`
-	WhitelistSources    []string `mapstructure:"whitelist_sources"`
-	BlockedKeywords     []string `mapstructure:"blocked_keywords"`
-	SanitizeMemory      bool     `mapstructure:"sanitize_memory"`
-	RequireApproval     []string `mapstructure:"require_approval"`
-	ApprovalTier        string   `mapstructure:"approval_tier"` // "owner", "admin", "auto-deny"
-	SensitivePatterns   []string `mapstructure:"sensitive_patterns"`
-	MaxContentLength    int      `mapstructure:"max_content_length"`
-	DetectionThreshold  float64  `mapstructure:"detection_threshold"` // 0.0-1.0
+	EnableProtection         bool     `mapstructure:"enable_protection"`
+	WhitelistSources         []string `mapstructure:"whitelist_sources"`
+	BlockedKeywords          []string `mapstructure:"blocked_keywords"`
+	SanitizeMemory           bool     `mapstructure:"sanitize_memory"`
+	RequireApproval          []string `mapstructure:"require_approval"`
+	ApprovalTier             string   `mapstructure:"approval_tier"` // "owner", "admin", "auto-deny"
+	SensitivePatterns        []string `mapstructure:"sensitive_patterns"`
+	DangerousCommandPatterns []string `mapstructure:"dangerous_command_patterns"`
+	MaxContentLength         int      `mapstructure:"max_content_length"`
+	DetectionThreshold       float64  `mapstructure:"detection_threshold"` // 0.0-1.0
 }
 
 // InjectionSource represents potential injection source types
@@ -26,7 +27,7 @@ type InjectionSource int
 const (
 	SourceUnknown InjectionSource = iota
 	SourceSkill
-	SourceNodeModules  
+	SourceNodeModules
 	SourceEmailAttachment
 	SourceCloudFile
 	SourceFetchResponse
@@ -46,12 +47,12 @@ const (
 
 // InjectionContext holds context about potential injection attempt
 type InjectionContext struct {
-	Source       InjectionSource
-	FilePath     string
-	Command      string
-	Content      string
-	Risk         InjectionRisk
-	Triggers     []string
+	Source        InjectionSource
+	FilePath      string
+	Command       string
+	Content       string
+	Risk          InjectionRisk
+	Triggers      []string
 	NeedsApproval bool
 }
 
@@ -61,19 +62,21 @@ func DefaultInjectionConfig() InjectionConfig {
 		EnableProtection: true,
 		WhitelistSources: []string{
 			"~/projects",
-			"~/agentloop-sandbox", 
+			"~/agentloop-sandbox",
 			"~/.config/agentloop",
+			"~/dev",
+			"~/development",
 		},
 		BlockedKeywords: []string{
 			"ignore previous instructions",
-			"forget everything above",  
+			"forget everything above",
 			"act as if you are",
 			"pretend you are",
 			"roleplay as",
 			"API_KEY",
 			"SECRET",
 			"TOKEN",
-			"PASSWORD", 
+			"PASSWORD",
 			"PRIVATE_KEY",
 			"credentials",
 			"auth",
@@ -82,7 +85,7 @@ func DefaultInjectionConfig() InjectionConfig {
 		SanitizeMemory: true,
 		RequireApproval: []string{
 			"skills/*",
-			"node_modules/*", 
+			"node_modules/*",
 			"*/attachments/*",
 			"cloud:*",
 			"fetch:*",
@@ -91,10 +94,22 @@ func DefaultInjectionConfig() InjectionConfig {
 		ApprovalTier: "owner",
 		SensitivePatterns: []string{
 			`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b`, // emails
-			`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`,                    // IP addresses
-			`sk-[a-zA-Z0-9]{48}`,                                   // OpenAI keys (must be before hex pattern!)
+			`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`,                   // IP addresses
+			`sk-[a-zA-Z0-9]{48}`,                                  // OpenAI keys (must be before hex pattern!)
 			`xoxb-[0-9]+-[0-9]+-[0-9]+-[a-zA-Z0-9]+`,              // Slack tokens
-			`\b[A-Fa-f0-9]{32,}\b`,                                 // hex keys (after specific patterns)
+			`\b[A-Fa-f0-9]{32,}\b`,                                // hex keys (after specific patterns)
+		},
+		// Specific patterns come first; broad hex pattern must be last so it
+		// does not shadow more-specific token formats (e.g. OpenAI keys).
+		DangerousCommandPatterns: []string{
+			`(?i)curl\s+.*\|\s*bash`, // curl piped to bash (remote code execution)
+			`(?i)wget\s+.*\|\s*sh`,   // wget piped to shell (remote code execution)
+			`(?i)eval\s*\$\(`,        // eval with command substitution
+			`(?i)exec\s*\$\(`,        // exec with command substitution
+			`(?i)rm\s+-rf\s+/\w`,     // destructive rm -rf on system path
+			`(?i)chmod\s+777`,        // overly permissive chmod
+			`(?i)mkfs`,               // filesystem creation
+			`(?i)dd\s+if=`,           // raw disk operation
 		},
 		MaxContentLength:   50000, // 50KB max
 		DetectionThreshold: 0.7,   // 70% confidence threshold
@@ -151,6 +166,14 @@ func DetectInjectionRisk(content string, source InjectionSource, config Injectio
 		ctx.Risk = max(ctx.Risk, RiskMedium) // Could be malicious repo
 	}
 
+	// Check for dangerous command patterns — these escalate directly to RiskCritical
+	for _, pattern := range config.DangerousCommandPatterns {
+		if matched, _ := regexp.MatchString(pattern, content); matched {
+			ctx.Risk = RiskCritical
+			ctx.Triggers = append(ctx.Triggers, fmt.Sprintf("dangerous_command:%s", pattern))
+		}
+	}
+
 	// Determine if approval is needed
 	ctx.NeedsApproval = ctx.Risk >= RiskMedium || isRequiredApproval(ctx.FilePath, config.RequireApproval)
 
@@ -164,7 +187,7 @@ func ValidateToolCallSource(toolName, filePath, command string, config Injection
 	}
 
 	source := detectSourceFromPath(filePath)
-	
+
 	// Check if source requires whitelist approval
 	if len(config.WhitelistSources) > 0 && !isWhitelistedSource(filePath, config.WhitelistSources) {
 		return fmt.Errorf("tool call from non-whitelisted source: %s", filePath)
@@ -181,7 +204,7 @@ func SanitizeContent(content string, config InjectionConfig) string {
 	}
 
 	sanitized := content
-	
+
 	// Mask sensitive patterns
 	for _, pattern := range config.SensitivePatterns {
 		re := regexp.MustCompile(pattern)
@@ -210,9 +233,9 @@ func detectSourceFromPath(path string) InjectionSource {
 	if path == "" {
 		return SourceUnknown
 	}
-	
+
 	cleanPath := filepath.Clean(path)
-	
+
 	switch {
 	case strings.Contains(cleanPath, "node_modules"):
 		return SourceNodeModules
@@ -235,7 +258,7 @@ func isWhitelistedSource(path string, whitelist []string) bool {
 	if len(whitelist) == 0 {
 		return true // No whitelist = everything allowed
 	}
-	
+
 	cleanPath := filepath.Clean(expandHome(path))
 	for _, allowed := range whitelist {
 		allowedPath := filepath.Clean(expandHome(allowed))
@@ -262,10 +285,10 @@ func validateToolPattern(toolName, command string, source InjectionSource, confi
 	// High-risk tool calls from external sources (exclude user input and unknown)
 	dangerousTools := []string{"bash", "write", "edit", "git"}
 	externalSources := []InjectionSource{
-		SourceNodeModules, SourceEmailAttachment, SourceCloudFile, 
+		SourceNodeModules, SourceEmailAttachment, SourceCloudFile,
 		SourceFetchResponse, SourceGitRepo,
 	}
-	
+
 	for _, externalSource := range externalSources {
 		if source == externalSource {
 			for _, tool := range dangerousTools {
@@ -280,11 +303,11 @@ func validateToolPattern(toolName, command string, source InjectionSource, confi
 	// Command-specific validations
 	if toolName == "bash" && command != "" {
 		// Check for fetch/curl from skills
-		if (strings.Contains(command, "curl") || strings.Contains(command, "wget") || strings.Contains(command, "fetch")) && 
-		   source == SourceSkill {
+		if (strings.Contains(command, "curl") || strings.Contains(command, "wget") || strings.Contains(command, "fetch")) &&
+			source == SourceSkill {
 			return fmt.Errorf("network requests from skills require approval")
 		}
-		
+
 		// Check for node_modules access
 		if strings.Contains(command, "node_modules") {
 			return fmt.Errorf("node_modules access requires approval")
@@ -300,4 +323,3 @@ func max(a, b InjectionRisk) InjectionRisk {
 	}
 	return b
 }
-

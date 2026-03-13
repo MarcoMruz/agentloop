@@ -45,10 +45,11 @@ type RPCEvent struct {
 	FinalError string `json:"finalError,omitempty"`
 
 	// extension_ui_request (HITL gate uses these)
-	Method  string   `json:"method,omitempty"`
-	Title   string   `json:"title,omitempty"`
-	Options []string `json:"options,omitempty"`
-	Timeout int      `json:"timeout,omitempty"`
+	Method      string   `json:"method,omitempty"`
+	Title       string   `json:"title,omitempty"`
+	UIMessage   string   `json:"message,omitempty"` // body text from ctx.ui.confirm(title, message)
+	Options     []string `json:"options,omitempty"`
+	Timeout     int      `json:"timeout,omitempty"`
 }
 
 // ExtensionUIResponse is sent back to pi when a dialog extension_ui_request needs a reply.

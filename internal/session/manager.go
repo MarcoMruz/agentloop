@@ -100,13 +100,33 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 			},
 			OnHITLRequest: func(details agent.HITLRequestDetails) {
 				sess.SetPendingHITL(details.RequestId)
-				req.HITLNotifier.Broadcast(sess.ID, "event.hitl_request", map[string]any{
+				params := map[string]any{
 					"sessionId": sess.ID, "requestId": details.RequestId,
 					"toolName": details.ToolName, "details": details.Title,
 					"command": details.Command, "workDir": details.WorkDir,
 					"rule": details.Rule, "method": details.Method,
 					"options": []string{"approve", "deny", "abort"},
-				})
+				}
+				// Enriched context fields (omitted when empty for backwards compat)
+				if details.ToolCategory != "" {
+					params["toolCategory"] = details.ToolCategory
+				}
+				if details.FilePath != "" {
+					params["filePath"] = details.FilePath
+				}
+				if details.WhitelistedPaths != nil {
+					params["whitelistedPaths"] = details.WhitelistedPaths
+				}
+				if details.StructuredInput != nil {
+					params["structuredInput"] = details.StructuredInput
+				}
+				if details.RiskLevel != "" {
+					params["riskLevel"] = details.RiskLevel
+				}
+				if details.Reason != "" {
+					params["reason"] = details.Reason
+				}
+				req.HITLNotifier.Broadcast(sess.ID, "event.hitl_request", params)
 			},
 			OnDone: func(output string, stats agent.RunStats) {
 				req.Broadcaster.Broadcast(sess.ID, "event.done", map[string]any{

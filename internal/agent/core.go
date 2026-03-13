@@ -27,13 +27,21 @@ type RunResult struct {
 }
 
 type HITLRequestDetails struct {
-	RequestId   string
-	ToolName    string
-	Method      string
-	Title       string
-	Command     string  // Full command or description
-	WorkDir     string  // Current working directory
-	Rule        string  // Security rule that triggered this
+	RequestId        string
+	ToolName         string
+	Method           string
+	Title            string
+	Command          string         // Full command or description
+	WorkDir          string         // Current working directory
+	Rule             string         // Security rule that triggered this
+
+	// Enriched context fields for Slack/CLI display
+	ToolCategory     string         // "file", "bash", "network", "process", "other"
+	FilePath         string         // Specific file/dir path (for file tools)
+	WhitelistedPaths []string       // Allowed paths from security config
+	StructuredInput  map[string]any // Parsed tool input key/values
+	RiskLevel        string         // "low", "medium", "high"
+	Reason           string         // Human-readable explanation of why blocked
 }
 
 type Callbacks struct {
@@ -64,37 +72,37 @@ func New(piCfg config.PiConfig, secCfg config.SecurityConfig, hitlCfg config.HIT
 	return &Core{piCfg: piCfg, secCfg: secCfg, hitlCfg: hitlCfg, pb: pb, cb: cb}
 }
 
-// parseHITLDetails extracts command and rule information from HITL event details
-func parseHITLDetails(title, method string) (command, rule string) {
-	// Extract command from common patterns in title
-	if strings.Contains(title, "Full command:") {
-		parts := strings.Split(title, "Full command:")
+// parseHITLDetails extracts command and rule information from HITL event details.
+// It parses both the title and the message body from the extension UI request.
+func parseHITLDetails(title, message, method string) (command, rule string) {
+	combined := title + "\n" + message
+
+	// Extract command from common patterns
+	if strings.Contains(combined, "Full command:") {
+		parts := strings.Split(combined, "Full command:")
 		if len(parts) > 1 {
 			commandPart := strings.Split(parts[1], "\n")[0]
 			command = strings.TrimSpace(commandPart)
 		}
 	}
-	
+
 	// Extract rule from title patterns
-	if strings.Contains(title, "dangerous pattern") {
-		if start := strings.Index(title, `"`); start != -1 {
-			if end := strings.Index(title[start+1:], `"`); end != -1 {
-				rule = "Dangerous Pattern: " + title[start+1:start+1+end]
-			}
+	lowerTitle := strings.ToLower(title)
+	switch {
+	case strings.Contains(lowerTitle, "dangerous"):
+		if q := extractQuoted(combined); q != "" {
+			rule = "Dangerous Pattern: " + q
 		}
-	} else if strings.Contains(title, "environment variables") {
-		if start := strings.Index(title, `"`); start != -1 {
-			if end := strings.Index(title[start+1:], `"`); end != -1 {
-				rule = "Environment Access: " + title[start+1:start+1+end]
-			}
+	case strings.Contains(lowerTitle, "environment"):
+		if q := extractQuoted(combined); q != "" {
+			rule = "Environment Access: " + q
 		}
-	} else if strings.Contains(title, "Docker command") {
+	case strings.Contains(lowerTitle, "docker"):
 		rule = "Docker Command Approval"
-	} else if strings.Contains(title, "outside allowed paths") {
+	case strings.Contains(lowerTitle, "file path") || strings.Contains(lowerTitle, "path access"):
 		rule = "Path Restriction"
 	}
 
-	// Fallback to basic method/title if no specific parsing worked
 	if command == "" {
 		command = title
 	}
@@ -103,6 +111,139 @@ func parseHITLDetails(title, method string) (command, rule string) {
 	}
 
 	return command, rule
+}
+
+// classifyToolCategory determines the tool category from the extension title.
+func classifyToolCategory(title string) string {
+	lower := strings.ToLower(title)
+	switch {
+	case strings.Contains(lower, "file") || strings.Contains(lower, "path"):
+		return "file"
+	case strings.Contains(lower, "docker") || strings.Contains(lower, "process"):
+		return "process"
+	case strings.Contains(lower, "curl") || strings.Contains(lower, "wget") || strings.Contains(lower, "network") || strings.Contains(lower, "fetch"):
+		return "network"
+	case strings.Contains(lower, "command") || strings.Contains(lower, "dangerous") || strings.Contains(lower, "environment"):
+		return "bash"
+	default:
+		return "other"
+	}
+}
+
+// classifyRiskLevel determines the risk level from the title and rule.
+func classifyRiskLevel(title, rule string) string {
+	lower := strings.ToLower(title + " " + rule)
+	switch {
+	case strings.Contains(lower, "dangerous") || strings.Contains(lower, "rm -rf") ||
+		strings.Contains(lower, "sudo") || strings.Contains(lower, "mkfs"):
+		return "high"
+	case strings.Contains(lower, "docker") || strings.Contains(lower, "environment") ||
+		strings.Contains(lower, "outside") || strings.Contains(lower, "path restriction"):
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+// extractFilePath pulls a file path from the extension message body.
+func extractFilePath(message string) string {
+	// Look for "Path: /some/path" pattern used by security-policy.ts
+	if idx := strings.Index(message, "Path: "); idx != -1 {
+		rest := message[idx+6:]
+		end := strings.IndexAny(rest, "\n\r")
+		if end == -1 {
+			end = len(rest)
+		}
+		return strings.TrimSpace(rest[:end])
+	}
+	return ""
+}
+
+// buildStructuredInput constructs a key/value map from the extension message.
+func buildStructuredInput(title, message, filePath string) map[string]any {
+	input := map[string]any{}
+
+	if filePath != "" {
+		input["path"] = filePath
+	}
+
+	// Extract "Full command: ..." from message
+	if strings.Contains(message, "Full command:") {
+		parts := strings.Split(message, "Full command:")
+		if len(parts) > 1 {
+			cmd := strings.TrimSpace(strings.Split(parts[1], "\n")[0])
+			if cmd != "" {
+				input["command"] = cmd
+			}
+		}
+	}
+
+	// Extract "Tool: ..." from message
+	if strings.Contains(message, "Tool: ") {
+		parts := strings.Split(message, "Tool: ")
+		if len(parts) > 1 {
+			tool := strings.TrimSpace(strings.Split(parts[1], "\n")[0])
+			if tool != "" {
+				input["tool"] = tool
+			}
+		}
+	}
+
+	if len(input) == 0 {
+		return nil
+	}
+	return input
+}
+
+// buildReason generates a human-readable explanation for the HITL block.
+func buildReason(title, category, rule string) string {
+	lower := strings.ToLower(title)
+	switch {
+	case category == "file" && strings.Contains(lower, "outside"):
+		return "The requested path is outside all configured safe directories."
+	case category == "file":
+		return "File operation requires approval — path is not in the whitelist."
+	case strings.Contains(lower, "dangerous"):
+		return "Command contains a pattern classified as dangerous."
+	case strings.Contains(lower, "environment"):
+		return "Command attempts to access sensitive environment variables."
+	case strings.Contains(lower, "docker"):
+		return "Docker command requires explicit approval."
+	default:
+		return "This operation requires human approval before proceeding."
+	}
+}
+
+// extractQuoted returns the first double-quoted substring in s.
+func extractQuoted(s string) string {
+	start := strings.Index(s, `"`)
+	if start == -1 {
+		return ""
+	}
+	end := strings.Index(s[start+1:], `"`)
+	if end == -1 {
+		return ""
+	}
+	return s[start+1 : start+1+end]
+}
+
+// enrichHITLDetails populates the enriched fields on HITLRequestDetails using
+// the extension UI event and the server's security config.
+func (c *Core) enrichHITLDetails(details *HITLRequestDetails, event bridge.RPCEvent) {
+	details.ToolCategory = classifyToolCategory(event.Title)
+	details.RiskLevel = classifyRiskLevel(event.Title, details.Rule)
+	details.Reason = buildReason(event.Title, details.ToolCategory, details.Rule)
+
+	// Extract file path from extension message body
+	details.FilePath = extractFilePath(event.UIMessage)
+
+	// For file tools, include whitelisted paths from security config
+	if details.ToolCategory == "file" {
+		details.WhitelistedPaths = c.secCfg.AllowedPaths
+	}
+
+	// Build structured input from available data
+	details.StructuredInput = buildStructuredInput(event.Title, event.UIMessage, details.FilePath)
 }
 
 func (c *Core) Run(ctx context.Context, userId string, task string, workDir string, sess SessionInterface) RunResult {
@@ -188,20 +329,21 @@ func (c *Core) Run(ctx context.Context, userId string, task string, workDir stri
 	// HITL handler: route through session's HITL resolution
 	b.SetHITLHandler(func(event bridge.RPCEvent) (bool, error) {
 		requestId := uuid.New().String()[:8]
-		
-		// Extract command details from the title/method for enhanced display
-		command, rule := parseHITLDetails(event.Title, event.Method)
 
-		// Build detailed HITL request
+		// Extract command details from both title and message body
+		command, rule := parseHITLDetails(event.Title, event.UIMessage, event.Method)
+
+		// Build detailed HITL request with enriched context
 		details := HITLRequestDetails{
 			RequestId: requestId,
 			ToolName:  event.Title,
-			Method:    event.Method, 
+			Method:    event.Method,
 			Title:     event.Title,
 			Command:   command,
 			WorkDir:   workDir,
 			Rule:      rule,
 		}
+		c.enrichHITLDetails(&details, event)
 
 		// Notify client (Slack/CLI) about HITL request
 		if c.cb.OnHITLRequest != nil {

@@ -278,18 +278,18 @@ func TestGetContextForUserWithTaskRelevance(t *testing.T) {
 	userId := "testuser"
 
 	// Seed: coding turn
-	if err := engine.conversations.Append(userId, "user", "fix the authentication middleware bug in the API"); err != nil {
+	if err := engine.conversations.Append(userId, "user", "fix the authentication middleware bug in the API", ""); err != nil {
 		t.Fatalf("Append failed: %v", err)
 	}
-	if err := engine.conversations.Append(userId, "assistant", "fixed null check in auth middleware, deployed to staging"); err != nil {
+	if err := engine.conversations.Append(userId, "assistant", "fixed null check in auth middleware, deployed to staging", ""); err != nil {
 		t.Fatalf("Append failed: %v", err)
 	}
 
 	// Seed: personal assistant turn
-	if err := engine.conversations.Append(userId, "user", "check my calendar for meetings scheduled next week"); err != nil {
+	if err := engine.conversations.Append(userId, "user", "check my calendar for meetings scheduled next week", ""); err != nil {
 		t.Fatalf("Append failed: %v", err)
 	}
-	if err := engine.conversations.Append(userId, "assistant", "found 3 meetings next week: standup Monday, review Wednesday, interview Friday"); err != nil {
+	if err := engine.conversations.Append(userId, "assistant", "found 3 meetings next week: standup Monday, review Wednesday, interview Friday", ""); err != nil {
 		t.Fatalf("Append failed: %v", err)
 	}
 
@@ -337,7 +337,7 @@ func TestGetContextForUserWithTaskCacheHit(t *testing.T) {
 	engine := NewEngine(vaultPath, 2000, "rolling", 7)
 	userId := "cacheuser"
 
-	if err := engine.conversations.Append(userId, "user", "check the deployment status on kubernetes"); err != nil {
+	if err := engine.conversations.Append(userId, "user", "check the deployment status on kubernetes", ""); err != nil {
 		t.Fatalf("Append failed: %v", err)
 	}
 
@@ -380,7 +380,7 @@ func TestConversationIndexSidecarCreated(t *testing.T) {
 	vaultPath := t.TempDir()
 	cs := NewConversationStore(vaultPath, 7)
 
-	if err := cs.Append("marco", "user", "send an email to the team about the sprint review"); err != nil {
+	if err := cs.Append("marco", "user", "send an email to the team about the sprint review", ""); err != nil {
 		t.Fatalf("Append failed: %v", err)
 	}
 
@@ -407,10 +407,10 @@ func TestGetRecentIndexedReturnsSummaries(t *testing.T) {
 	vaultPath := t.TempDir()
 	cs := NewConversationStore(vaultPath, 7)
 
-	if err := cs.Append("marco", "user", "schedule a standup meeting"); err != nil {
+	if err := cs.Append("marco", "user", "schedule a standup meeting", ""); err != nil {
 		t.Fatalf("Append failed: %v", err)
 	}
-	if err := cs.Append("marco", "assistant", "created the calendar invite"); err != nil {
+	if err := cs.Append("marco", "assistant", "created the calendar invite", ""); err != nil {
 		t.Fatalf("Append failed: %v", err)
 	}
 

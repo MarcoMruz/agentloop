@@ -24,6 +24,20 @@ type StartRequest struct {
 	Source       string // "cli", "slack", etc.
 	Broadcaster  Broadcaster
 	HITLNotifier Broadcaster // same interface, routes hitl_request events
+
+	// Slack thread metadata. When both ChannelID and ThreadID are set,
+	// ComputeConversationContextID returns a stable key scoping memory to this thread.
+	ChannelID string
+	ThreadID  string
+}
+
+// ComputeConversationContextID returns a stable context key for memory scoping.
+// Returns empty string when not applicable (CLI, missing fields, etc.).
+func (r StartRequest) ComputeConversationContextID() string {
+	if r.ChannelID == "" || r.ThreadID == "" {
+		return ""
+	}
+	return r.ChannelID + ":" + r.ThreadID
 }
 
 type Manager struct {
@@ -71,7 +85,7 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 		return nil, fmt.Errorf("max sessions per user (%d) reached — use task.abort first", m.cfg.MaxPerUser)
 	}
 
-	sess := NewSession(req.UserID, req.Text, req.WorkDir, req.Source)
+	sess := NewSession(req.UserID, req.Text, req.WorkDir, req.Source, req.ChannelID, req.ThreadID)
 	m.sessions[sess.ID] = sess
 	m.userMap[req.UserID] = append(m.userMap[req.UserID], sess.ID)
 	m.mu.Unlock()
@@ -137,7 +151,7 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 		}
 
 		// Update memory with this interaction
-		m.memory.RecordInteraction(req.UserID, req.Text, result.Output, result.ToolsUsed)
+		m.memory.RecordInteraction(req.UserID, req.Text, result.Output, result.ToolsUsed, sess.ConversationContextID)
 	}()
 
 	return sess, nil

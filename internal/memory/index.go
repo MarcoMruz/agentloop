@@ -10,11 +10,12 @@ import (
 // IndexEntry is a lightweight, searchable summary of a single conversation turn.
 // Stored as a JSON sidecar alongside each daily markdown conversation file.
 type IndexEntry struct {
-	Timestamp string   `json:"ts"`
-	Role      string   `json:"role"`
-	Keywords  []string `json:"keywords"`
-	Topics    []string `json:"topics"`
-	Summary   string   `json:"summary"`
+	Timestamp            string   `json:"ts"`
+	Role                 string   `json:"role"`
+	Keywords             []string `json:"keywords"`
+	Topics               []string `json:"topics"`
+	Summary              string   `json:"summary"`
+	ConversationContextID string  `json:"conversation_context_id,omitempty"`
 }
 
 // ConversationIndex holds all indexed entries for one user-day file.
@@ -52,13 +53,14 @@ func appendIndexEntry(path string, entry IndexEntry) error {
 }
 
 // buildIndexEntry extracts keywords, topics, and a summary from a raw message.
-func buildIndexEntry(ts, role, content string) IndexEntry {
+func buildIndexEntry(ts, role, content, conversationContextID string) IndexEntry {
 	return IndexEntry{
-		Timestamp: ts,
-		Role:      role,
-		Keywords:  extractKeywords(content),
-		Topics:    extractTopics(content),
-		Summary:   summarizeEntry(content),
+		Timestamp:            ts,
+		Role:                 role,
+		Keywords:             extractKeywords(content),
+		Topics:               extractTopics(content),
+		Summary:              summarizeEntry(content),
+		ConversationContextID: conversationContextID,
 	}
 }
 

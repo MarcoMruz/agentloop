@@ -40,6 +40,11 @@ type Session struct {
 	StartedAt    time.Time
 	LastActivity time.Time
 
+	// Thread/context isolation fields.
+	ThreadID              string
+	ChannelID             string
+	ConversationContextID string // e.g. "C123456:1234567890.000100" for Slack threads
+
 	mu          sync.Mutex
 	steerCh     chan string
 	abortCh     chan struct{}
@@ -47,7 +52,7 @@ type Session struct {
 	result      *agent.RunResult
 }
 
-func NewSession(userId, task, workDir, source string) *Session {
+func NewSession(userId, task, workDir, source, channelID, threadID string) *Session {
 	now := time.Now()
 	return &Session{
 		ID:           fmt.Sprintf("sess-%s", uuid.New().String()[:8]),
@@ -58,10 +63,23 @@ func NewSession(userId, task, workDir, source string) *Session {
 		State:        StateStarting,
 		StartedAt:    now,
 		LastActivity: now,
-		steerCh:      make(chan string, 5),
-		abortCh:      make(chan struct{}),
-		hitlPending:  make(map[string]chan string),
+		ChannelID:    channelID,
+		ThreadID:     threadID,
+		ConversationContextID: func() string {
+			if channelID == "" || threadID == "" {
+				return ""
+			}
+			return channelID + ":" + threadID
+		}(),
+		steerCh:     make(chan string, 5),
+		abortCh:     make(chan struct{}),
+		hitlPending: make(map[string]chan string),
 	}
+}
+
+// GetConversationContextID returns the context ID for memory scoping.
+func (s *Session) GetConversationContextID() string {
+	return s.ConversationContextID
 }
 
 // Touch updates LastActivity to now. Called on every text response from the agent.
@@ -169,6 +187,9 @@ func (s *Session) ToVaultNote(r agent.RunResult) vault.SessionNote {
 			Created: s.StartedAt, Updated: time.Now(),
 			Status: string(s.State), Provider: "", Model: "",
 			Source: s.Source, UserID: s.UserID,
+			ThreadID:              s.ThreadID,
+			ChannelID:             s.ChannelID,
+			ConversationContextID: s.ConversationContextID,
 		},
 		TaskText:   s.Task,
 		Transcript: r.Output,

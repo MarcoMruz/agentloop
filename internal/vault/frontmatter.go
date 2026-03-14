@@ -17,6 +17,10 @@ type SessionFrontmatter struct {
 	Source   string    `yaml:"source"`
 	UserID   string    `yaml:"user_id"`
 	Tags     []string  `yaml:"tags"`
+	// Thread metadata for Slack-sourced sessions. Empty for CLI.
+	ThreadID              string `yaml:"thread_id,omitempty"`
+	ChannelID             string `yaml:"channel_id,omitempty"`
+	ConversationContextID string `yaml:"conversation_context_id,omitempty"`
 }
 
 func ParseFrontmatter(content string) (yamlBlock string, body string) {

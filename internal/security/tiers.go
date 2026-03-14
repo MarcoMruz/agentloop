@@ -153,12 +153,16 @@ func classifyDockerCommand(command string, cfg *config.SecurityConfig) SecurityT
 
 // classifyFileOperation determines the tier for file write/edit operations
 func classifyFileOperation(toolName string, filePath string, cfg *config.SecurityConfig) SecurityTier {
-	// Check if path validation would fail (this would be blocked)
-	if err := ValidatePath(filePath, cfg.AllowedPaths); err != nil {
-		return TierHITL // Require approval for paths outside allowed dirs
+	// If AllowedPaths are configured, they are the authoritative gate.
+	// A path that passes ValidatePath is explicitly permitted — log it.
+	if len(cfg.AllowedPaths) > 0 {
+		if err := ValidatePath(filePath, cfg.AllowedPaths); err != nil {
+			return TierHITL // Outside allowed dirs — require approval
+		}
+		return TierLog
 	}
 
-	// Check if it's in a sensitive location
+	// No AllowedPaths configured: fall back to sensitive pattern matching.
 	sensitivePatterns := []string{
 		"/etc/", "/var/", "/root/", "/proc/", "/sys/", "/dev/",
 		"/.git/", "/node_modules/", ".env", "credentials", "config",

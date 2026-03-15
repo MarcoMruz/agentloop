@@ -495,15 +495,21 @@ internal/memory/
 
 ```go
 // session/manager.go — after task completion
+// RunResult is available after agent.Core.Run() completes and sess.SetResult() is called.
+// Session needs a new Stats() accessor that returns RunResult.Stats.
+result := sess.Result()
 collector.Record(TaskOutcome{
     SessionID:   sess.ID,
     UserID:      sess.UserID,
     HITLDenials: sess.HITLDenialCount(),
     SteerCount:  sess.SteerCount(),
-    FinalStatus: sess.Status(),
-    TokensUsed:  sess.Stats.Tokens,
-    ToolCalls:   sess.Stats.ToolCalls,
-    // ...
+    FinalStatus: string(sess.Status()),
+    TokensUsed:  result.Stats.Tokens,
+    ToolCalls:   result.Stats.ToolCalls,
+    TaskKeywords: evolve.ExtractKeywords(sess.Task()),
+    TaskTopics:   evolve.ExtractTopics(sess.Task()),
+    SkillsUsed:  result.SkillsUsed,
+    PipelineID:  pipeline.ConfigVersion(),
 })
 ```
 
@@ -541,7 +547,7 @@ Evolution EvolutionConfig `mapstructure:"evolution"`
 
 Path fields (`PipelineConfigPath`) get `expandHome()` treatment in `Load()`.
 
-### 10.2 New Config Section
+### 10.2 Config Struct
 
 ```go
 type EvolutionConfig struct {
@@ -556,7 +562,7 @@ type EvolutionConfig struct {
 }
 ```
 
-### 10.2 Defaults
+### 10.3 Defaults
 
 ```go
 Evolution: EvolutionConfig{
@@ -571,7 +577,7 @@ Evolution: EvolutionConfig{
 }
 ```
 
-### 10.3 YAML
+### 10.4 YAML
 
 ```yaml
 evolution:

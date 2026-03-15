@@ -25,10 +25,13 @@ func (h *Handler) Handle(ctx context.Context, client *Client, req JSONRPCRequest
 
 	case "task.start":
 		var p struct {
-			UserID  string `json:"userId"`
-			Text    string `json:"text"`
-			WorkDir string `json:"workDir"`
-			Source  string `json:"source"`
+			UserID    string `json:"userId"`
+			Text      string `json:"text"`
+			WorkDir   string `json:"workDir"`
+			Source    string `json:"source"`
+			// Slack thread metadata (optional)
+			ThreadID  string `json:"thread_id"`
+			ChannelID string `json:"channel_id"`
 		}
 		json.Unmarshal(req.Params, &p)
 		if p.UserID == "" || p.Text == "" {
@@ -40,6 +43,8 @@ func (h *Handler) Handle(ctx context.Context, client *Client, req JSONRPCRequest
 			Text:         p.Text,
 			WorkDir:      p.WorkDir,
 			Source:       p.Source,
+			ThreadID:     p.ThreadID,
+			ChannelID:    p.ChannelID,
 			Broadcaster:  h.server,
 			HITLNotifier: h.server,
 		})

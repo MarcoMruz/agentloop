@@ -68,18 +68,22 @@ func (e *Engine) GetContextForUser(userId string) (string, error) {
 
 // RecordInteraction saves a conversation turn and updates the user profile.
 // Called by the session manager after each completed task.
-func (e *Engine) RecordInteraction(userId string, userMsg string, agentReply string, toolsUsed []string) {
-	// Invalidate cache
+func (e *Engine) RecordInteraction(userId string, userMsg string, agentReply string, toolsUsed []string, conversationContextID string) {
+	// Invalidate global user cache
 	e.cache.Delete("ctx:" + userId)
+	// Invalidate thread-specific cache
+	if conversationContextID != "" {
+		e.cache.Delete("ctx:" + userId + ":" + conversationContextID)
+	}
 
 	// Append to conversation log
-	if err := e.conversations.Append(userId, "user", userMsg); err != nil {
+	if err := e.conversations.Append(userId, "user", userMsg, conversationContextID); err != nil {
 		slog.Warn("failed to log user message", "error", err)
 	}
 
 	summary := agentReply
 	if len(summary) > 500 { summary = summary[:500] + "..." }
-	if err := e.conversations.Append(userId, "assistant", summary); err != nil {
+	if err := e.conversations.Append(userId, "assistant", summary, conversationContextID); err != nil {
 		slog.Warn("failed to log assistant message", "error", err)
 	}
 
@@ -179,6 +183,47 @@ func (e *Engine) GetContextForUserWithTask(userId string, task string) (string, 
 		} else {
 			sb.WriteString("\n\n## Recent context\n")
 		}
+		sb.WriteString(strings.Join(historyLines, "\n"))
+	}
+
+	ctx := sb.String()
+	e.cache.Set(cacheKey, ctx, 5*60)
+	return ctx, nil
+}
+
+// GetContextForUserAndConversationContext builds a memory context scoped to a specific
+// conversation thread (e.g., a Slack thread). Only entries tagged with contextID are
+// included in history. Falls back to GetContextForUser when contextID is empty.
+func (e *Engine) GetContextForUserAndConversationContext(userId, contextID string) (string, error) {
+	if contextID == "" {
+		return e.GetContextForUser(userId)
+	}
+
+	cacheKey := "ctx:" + userId + ":" + contextID
+	if cached := e.cache.Get(cacheKey); cached != "" {
+		return cached, nil
+	}
+
+	profile, err := e.profiles.Load(userId)
+	if err != nil {
+		profile = DefaultProfile(userId)
+	}
+	profileText := profile.Render()
+
+	entries, err := e.conversations.GetRecentIndexedByContext(userId, contextID, 30)
+	if err != nil {
+		return profileText, nil // Return profile-only on error — don't fail the whole prompt
+	}
+
+	var historyLines []string
+	for _, entry := range entries {
+		historyLines = append(historyLines, fmt.Sprintf("- [%s %s] %s", entry.Timestamp[:5], entry.Role, entry.Summary))
+	}
+
+	var sb strings.Builder
+	sb.WriteString(profileText)
+	if len(historyLines) > 0 {
+		sb.WriteString(fmt.Sprintf("\n\n## Thread context (%d entries)\n", len(historyLines)))
 		sb.WriteString(strings.Join(historyLines, "\n"))
 	}
 

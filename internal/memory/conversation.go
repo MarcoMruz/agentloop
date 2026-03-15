@@ -31,7 +31,7 @@ func (cs *ConversationStore) idxPath(userId string, date string) string {
 }
 
 // Append adds a conversation turn to today's log and updates the index sidecar.
-func (cs *ConversationStore) Append(userId string, role string, content string) error {
+func (cs *ConversationStore) Append(userId string, role string, content string, conversationContextID string) error {
 	date := time.Now().Format("2006-01-02")
 	ts := time.Now().Format("15:04:05")
 	path := cs.dayPath(userId, date)
@@ -50,7 +50,7 @@ func (cs *ConversationStore) Append(userId string, role string, content string) 
 	f.Close()
 
 	// Update lightweight index sidecar for relevance-based retrieval
-	idxEntry := buildIndexEntry(ts, role, content)
+	idxEntry := buildIndexEntry(ts, role, content, conversationContextID)
 	_ = appendIndexEntry(cs.idxPath(userId, date), idxEntry)
 
 	return nil
@@ -110,6 +110,29 @@ func (cs *ConversationStore) GetRecentIndexed(userId string, maxEntries int) ([]
 		}
 	}
 	return out, nil
+}
+
+// GetRecentIndexedByContext returns recent indexed entries filtered to a specific
+// conversation context. When contextID is empty, returns all entries (same as GetRecentIndexed).
+func (cs *ConversationStore) GetRecentIndexedByContext(userId, contextID string, maxEntries int) ([]IndexEntry, error) {
+	if contextID == "" {
+		return cs.GetRecentIndexed(userId, maxEntries)
+	}
+	// Over-fetch then filter; multiply by 10 to handle sparse threads.
+	all, err := cs.GetRecentIndexed(userId, maxEntries*10)
+	if err != nil {
+		return nil, err
+	}
+	var filtered []IndexEntry
+	for _, e := range all {
+		if e.ConversationContextID == contextID {
+			filtered = append(filtered, e)
+			if len(filtered) >= maxEntries {
+				break
+			}
+		}
+	}
+	return filtered, nil
 }
 
 func truncateContent(s string, n int) string {

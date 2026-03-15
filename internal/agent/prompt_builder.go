@@ -25,12 +25,18 @@ func NewPromptBuilder(mem *memory.Engine, sk *skills.Registry) *PromptBuilder {
 }
 
 // Build constructs the full prompt for a user task.
-func (pb *PromptBuilder) Build(userId string, task string, skillNames []string) (string, error) {
+func (pb *PromptBuilder) Build(userId string, task string, skillNames []string, conversationContextID string) (string, error) {
 	var sections []string
 
-	// Section 1: Memory context — task-aware relevance filtering keeps token cost low.
-	// Falls back to full context when no index exists yet.
-	memCtx, err := pb.mem.GetContextForUserWithTask(userId, task)
+	// Section 1: Memory context. For Slack threads, scope to the thread context.
+	// Falls back to task-aware retrieval for CLI sessions.
+	var memCtx string
+	var err error
+	if conversationContextID != "" {
+		memCtx, err = pb.mem.GetContextForUserAndConversationContext(userId, conversationContextID)
+	} else {
+		memCtx, err = pb.mem.GetContextForUserWithTask(userId, task)
+	}
 	if err != nil {
 		slog.Warn("prompt_builder: failed to get memory context", "userId", userId, "err", err)
 	} else if memCtx != "" {

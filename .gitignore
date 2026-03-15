@@ -5,6 +5,7 @@ agentloop
 
 # Development directories
 dev/
+.worktrees/
 
 # OS files
 .DS_Store

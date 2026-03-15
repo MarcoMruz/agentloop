@@ -72,6 +72,15 @@ func renderSession(note SessionNote) string {
 	if len(fm.Tags) > 0 {
 		sb.WriteString("tags: [" + strings.Join(fm.Tags, ", ") + "]\n")
 	}
+	if fm.ThreadID != "" {
+		sb.WriteString(fmt.Sprintf("thread_id: %s\n", fm.ThreadID))
+	}
+	if fm.ChannelID != "" {
+		sb.WriteString(fmt.Sprintf("channel_id: %s\n", fm.ChannelID))
+	}
+	if fm.ConversationContextID != "" {
+		sb.WriteString(fmt.Sprintf("conversation_context_id: %s\n", fm.ConversationContextID))
+	}
 	sb.WriteString("---\n\n## Task\n\n" + note.TaskText + "\n\n")
 	if len(note.ToolCalls) > 0 {
 		sb.WriteString("## Tools Used\n\n")

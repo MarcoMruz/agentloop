@@ -58,6 +58,9 @@ type SessionInterface interface {
 	WaitHITL(requestId string, timeout time.Duration) (string, error)
 	AbortCh() <-chan struct{}
 	SteerCh() <-chan string
+	// GetConversationContextID returns the thread/context key for memory scoping.
+	// Returns empty string for CLI sessions.
+	GetConversationContextID() string
 }
 
 type Core struct {
@@ -255,7 +258,8 @@ func (c *Core) Run(ctx context.Context, userId string, task string, workDir stri
 
 	// Build the full prompt: memory context + skills + task
 	skillNames := c.pb.DetectSkills(task)
-	fullPrompt, err := c.pb.Build(userId, task, skillNames)
+	conversationContextID := sess.GetConversationContextID()
+	fullPrompt, err := c.pb.Build(userId, task, skillNames, conversationContextID)
 	if err != nil {
 		slog.Warn("Core.Run: prompt build error, falling back to raw task", "err", err)
 		fullPrompt = task

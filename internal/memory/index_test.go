@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-// --- extractKeywords ---
+// --- ExtractKeywords ---
 
 func TestExtractKeywordsBasic(t *testing.T) {
-	kw := extractKeywords("schedule a standup meeting with the team for tomorrow")
+	kw := ExtractKeywords("schedule a standup meeting with the team for tomorrow")
 	found := map[string]bool{}
 	for _, k := range kw {
 		found[k] = true
@@ -32,7 +32,7 @@ func TestExtractKeywordsBasic(t *testing.T) {
 }
 
 func TestExtractKeywordsShortWordsFiltered(t *testing.T) {
-	kw := extractKeywords("do it in an api call")
+	kw := ExtractKeywords("do it in an api call")
 	found := map[string]bool{}
 	for _, k := range kw {
 		found[k] = true
@@ -48,7 +48,7 @@ func TestExtractKeywordsShortWordsFiltered(t *testing.T) {
 }
 
 func TestExtractKeywordsDedup(t *testing.T) {
-	kw := extractKeywords("deploy deploy deploy the service")
+	kw := ExtractKeywords("deploy deploy deploy the service")
 	count := 0
 	for _, k := range kw {
 		if k == "deploy" {
@@ -63,16 +63,16 @@ func TestExtractKeywordsDedup(t *testing.T) {
 func TestExtractKeywordsMaxCap(t *testing.T) {
 	// Generate a long sentence with 20+ unique non-stopword words
 	text := "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda sigma omega upsilon phi chi psi rho tau omicron"
-	kw := extractKeywords(text)
+	kw := ExtractKeywords(text)
 	if len(kw) > 15 {
 		t.Errorf("expected at most 15 keywords, got %d", len(kw))
 	}
 }
 
-// --- extractTopics ---
+// --- ExtractTopics ---
 
 func TestExtractTopicsCode(t *testing.T) {
-	topics := extractTopics("deploy the docker container to kubernetes cluster")
+	topics := ExtractTopics("deploy the docker container to kubernetes cluster")
 	found := map[string]bool{}
 	for _, t := range topics {
 		found[t] = true
@@ -89,7 +89,7 @@ func TestExtractTopicsCode(t *testing.T) {
 }
 
 func TestExtractTopicsPersonal(t *testing.T) {
-	topics := extractTopics("schedule a meeting and send an email about the budget review")
+	topics := ExtractTopics("schedule a meeting and send an email about the budget review")
 	found := map[string]bool{}
 	for _, t := range topics {
 		found[t] = true
@@ -113,7 +113,7 @@ func TestExtractTopicsPersonal(t *testing.T) {
 
 func TestExtractTopicsSubstringMatch(t *testing.T) {
 	// "scheduling" should match "schedule" via substring
-	topics := extractTopics("scheduling the team standup")
+	topics := ExtractTopics("scheduling the team standup")
 	found := map[string]bool{}
 	for _, t := range topics {
 		found[t] = true

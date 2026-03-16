@@ -131,8 +131,8 @@ func (e *Engine) GetContextForUserWithTask(userId string, task string) (string, 
 	}
 
 	// Score entries against task
-	taskKw := extractKeywords(task)
-	taskTopics := extractTopics(task)
+	taskKw := ExtractKeywords(task)
+	taskTopics := ExtractTopics(task)
 
 	type scored struct {
 		entry IndexEntry

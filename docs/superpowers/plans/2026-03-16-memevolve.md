@@ -535,7 +535,7 @@ Evolution: EvolutionConfig{
 
 In `internal/config/loader.go`, after the existing `resolvePath` calls (around line 40-43), add:
 ```go
-cfg.Evolution.PipelineConfigPath = resolvePath(cfg.Evolution.PipelineConfigPath)
+cfg.Evolution.PipelineConfigPath = resolvePath(cfg.Evolution.PipelineConfigPath, configDir)
 ```
 
 - [ ] **Step 4: Add evolution section to configs/agentloop.yaml**
@@ -613,6 +613,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 )
 
@@ -799,6 +800,7 @@ func (e *BaselineEncoder) Encode(ctx context.Context, input evolve.EncoderInput)
 			Metadata: map[string]string{
 				"type":      "conversation",
 				"contextID": input.ConversationContextID,
+				"userId":    input.UserID,
 			},
 		})
 	}
@@ -814,6 +816,7 @@ func (e *BaselineEncoder) Encode(ctx context.Context, input evolve.EncoderInput)
 			Metadata: map[string]string{
 				"type":      "conversation",
 				"contextID": input.ConversationContextID,
+				"userId":    input.UserID,
 			},
 		})
 	}
@@ -3148,7 +3151,7 @@ func (m *MetaAgent) runPiSession(prompt string) (string, error) {
 	b.SetEventHandler(func(event bridge.RPCEvent) error {
 		if event.Type == "message_update" && event.AssistantMessageEvent != nil {
 			if event.AssistantMessageEvent.Type == "text_delta" {
-				response.WriteString(event.AssistantMessageEvent.Text)
+				response.WriteString(event.AssistantMessageEvent.Delta)
 			}
 		}
 		return nil

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -51,7 +50,7 @@ func (m *MetaAgent) Evolve(outcome metrics.TaskOutcome) {
 	slog.Info("evolution starting", "session", outcome.SessionID, "score", outcome.Score())
 
 	allOutcomes, err := metrics.LoadOutcomes(
-		filepath.Join(m.vaultPath, "memory", "evolved"),
+		m.vaultPath,
 		outcome.UserID,
 		30,
 	)

@@ -1,6 +1,7 @@
 package meta
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -146,17 +147,26 @@ func (a *Applier) gitCommit(summary string) {
 
 func (a *Applier) logEvolution(proposal *EvolutionProposal) {
 	logPath := filepath.Join(a.vaultPath, "memory", "evolved", "evolution-log.jsonl")
-	entry := fmt.Sprintf(`{"timestamp":"%s","summary":"%s","reasoning":"%s"}`,
-		time.Now().Format(time.RFC3339),
-		strings.ReplaceAll(proposal.Summary, `"`, `\"`),
-		strings.ReplaceAll(proposal.Reasoning, `"`, `\"`),
-	)
+	entry := struct {
+		Timestamp string `json:"timestamp"`
+		Summary   string `json:"summary"`
+		Reasoning string `json:"reasoning"`
+	}{
+		Timestamp: time.Now().Format(time.RFC3339),
+		Summary:   proposal.Summary,
+		Reasoning: proposal.Reasoning,
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	f.WriteString(entry + "\n")
+	f.Write(data)
+	f.Write([]byte("\n"))
 }
 
 func buildSkillMD(sp SkillProposal) string {

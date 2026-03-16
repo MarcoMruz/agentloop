@@ -6,9 +6,12 @@ import (
 	"log/slog"
 	"sync"
 
+	"time"
+
 	"github.com/MarcoMruz/agentloop/internal/agent"
 	"github.com/MarcoMruz/agentloop/internal/config"
 	"github.com/MarcoMruz/agentloop/internal/memory"
+	"github.com/MarcoMruz/agentloop/internal/memory/evolve/metrics"
 	"github.com/MarcoMruz/agentloop/internal/skills"
 	"github.com/MarcoMruz/agentloop/internal/vault"
 )
@@ -48,9 +51,10 @@ type Manager struct {
 	vault    *vault.Vault
 	memory   *memory.Engine
 	skills   *skills.Registry
-	sessions map[string]*Session
-	userMap  map[string][]string // userId → active sessionIds
-	mu       sync.RWMutex
+	collector *metrics.Collector
+	sessions  map[string]*Session
+	userMap   map[string][]string // userId → active sessionIds
+	mu        sync.RWMutex
 }
 
 func NewManager(cfg *config.Config, v *vault.Vault, mem *memory.Engine, sk *skills.Registry) *Manager {
@@ -65,6 +69,11 @@ func NewManager(cfg *config.Config, v *vault.Vault, mem *memory.Engine, sk *skil
 		sessions: make(map[string]*Session),
 		userMap:  make(map[string][]string),
 	}
+}
+
+// SetMetricsCollector sets the evolution metrics collector.
+func (m *Manager) SetMetricsCollector(c *metrics.Collector) {
+	m.collector = c
 }
 
 func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session, error) {
@@ -172,6 +181,20 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 
 		// Update memory with this interaction
 		m.memory.RecordInteraction(req.UserID, req.Text, result.Output, result.ToolsUsed, sess.ConversationContextID)
+
+		// Record task outcome for evolution metrics
+		if m.collector != nil {
+			m.collector.Record(metrics.TaskOutcome{
+				SessionID:    sess.ID,
+				UserID:       sess.UserID,
+				Timestamp:    time.Now(),
+				HITLDenials:  sess.HITLDenialCount(),
+				SteerCount:   sess.SteerCount(),
+				FinalStatus:  string(sess.State),
+				TaskKeywords: memory.ExtractKeywords(sess.Task),
+				TaskTopics:   memory.ExtractTopics(sess.Task),
+			})
+		}
 	}()
 
 	return sess, nil

@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,6 +45,9 @@ type Session struct {
 	ThreadID              string
 	ChannelID             string
 	ConversationContextID string // e.g. "C123456:1234567890.000100" for Slack threads
+
+	hitlDenials int32
+	steerCount  int32
 
 	mu          sync.Mutex
 	steerCh     chan string
@@ -103,6 +107,7 @@ func (s *Session) Info() SessionInfo {
 }
 
 func (s *Session) Steer(text string) error {
+	atomic.AddInt32(&s.steerCount, 1)
 	select {
 	case s.steerCh <- text:
 		return nil
@@ -145,8 +150,21 @@ func (s *Session) ResolveHITL(requestId string, decision string) error {
 	s.State = StateRunning
 	s.mu.Unlock()
 
+	if decision == "deny" {
+		atomic.AddInt32(&s.hitlDenials, 1)
+	}
 	ch <- decision
 	return nil
+}
+
+// HITLDenialCount returns the number of HITL denials in this session.
+func (s *Session) HITLDenialCount() int {
+	return int(atomic.LoadInt32(&s.hitlDenials))
+}
+
+// SteerCount returns the number of steer commands in this session.
+func (s *Session) SteerCount() int {
+	return int(atomic.LoadInt32(&s.steerCount))
 }
 
 func (s *Session) WaitHITL(requestId string, timeout time.Duration) (string, error) {

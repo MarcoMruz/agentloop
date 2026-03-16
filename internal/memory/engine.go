@@ -1,10 +1,13 @@
 package memory
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
+
+	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
 )
 
 type Engine struct {
@@ -13,6 +16,7 @@ type Engine struct {
 	cache         *PromptCache
 	compactor     *Compactor
 	maxCtxTokens  int
+	pipeline      *evolve.PipelineHolder
 }
 
 func NewEngine(vaultPath string, maxContextTokens int, compactionStrategy string, retainDays int) *Engine {
@@ -91,6 +95,11 @@ func (e *Engine) RecordInteraction(userId string, userMsg string, agentReply str
 	e.profiles.UpdateFromInteraction(userId, userMsg, toolsUsed)
 }
 
+// SetPipeline sets the MemEvolve pipeline for delegation.
+func (e *Engine) SetPipeline(p *evolve.PipelineHolder) {
+	e.pipeline = p
+}
+
 // UpdateUserFact allows explicit profile updates (e.g. "remember I prefer TypeScript").
 func (e *Engine) UpdateUserFact(userId string, key string, value string) error {
 	e.cache.Delete("ctx:" + userId)
@@ -109,6 +118,22 @@ func (e *Engine) ForgetUserFact(userId string, key string) error {
 // recent entries when no keyword overlap is found.
 // Works across all domains: coding, email, calendar, reports, scheduling, etc.
 func (e *Engine) GetContextForUserWithTask(userId string, task string) (string, error) {
+	// Delegate to MemEvolve pipeline if available
+	if e.pipeline != nil {
+		p := e.pipeline.Get()
+		if p != nil {
+			result, err := p.Retrieve(context.Background(), evolve.RetrievalQuery{
+				UserID:    userId,
+				Task:      task,
+				MaxTokens: e.maxCtxTokens,
+			})
+			if err == nil {
+				return result.Context, nil
+			}
+			slog.Warn("pipeline retrieve failed, falling back", "error", err)
+		}
+	}
+
 	// Derive a short stable cache key from the task
 	taskKey := taskCacheKey(task)
 	cacheKey := "ctx:" + userId + ":" + taskKey

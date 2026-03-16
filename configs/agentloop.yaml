@@ -236,3 +236,13 @@ skills:
 logging:
     level: debug
     file: ~/.config/agentloop/agentloop.log
+
+# Evolution (MemEvolve)
+evolution:
+  enabled: true
+  score_threshold: 0.7
+  meta_token_budget: 10000
+  max_outcomes_per_run: 10
+  snapshot_retain_max: 50
+  min_cooldown_seconds: 300
+  max_daily_runs: 10

@@ -9,7 +9,8 @@ type Config struct {
 	HITL     HITLConfig     `mapstructure:"hitl"`
 	Security SecurityConfig `mapstructure:"security"`
 	Skills   SkillsConfig   `mapstructure:"skills"`
-	Logging  LoggingConfig  `mapstructure:"logging"`
+	Logging   LoggingConfig   `mapstructure:"logging"`
+	Evolution EvolutionConfig `mapstructure:"evolution"`
 }
 
 type ServerConfig struct {
@@ -98,6 +99,17 @@ type SkillsConfig struct {
 type LoggingConfig struct {
 	Level string `mapstructure:"level"`
 	File  string `mapstructure:"file"`
+}
+
+type EvolutionConfig struct {
+	Enabled            bool    `mapstructure:"enabled"`
+	ScoreThreshold     float64 `mapstructure:"score_threshold"`
+	MetaTokenBudget    int     `mapstructure:"meta_token_budget"`
+	MaxOutcomesPerRun  int     `mapstructure:"max_outcomes_per_run"`
+	SnapshotRetainMax  int     `mapstructure:"snapshot_retain_max"`
+	PipelineConfigPath string  `mapstructure:"pipeline_config_path"`
+	MinCooldownSeconds int     `mapstructure:"min_cooldown_seconds"`
+	MaxDailyRuns       int     `mapstructure:"max_daily_runs"`
 }
 
 func Defaults() *Config {
@@ -253,5 +265,15 @@ func Defaults() *Config {
 		},
 		Skills:  SkillsConfig{SkillDirs: []string{"~/.local/share/agentloop/vault/skills"}},
 		Logging: LoggingConfig{Level: "info"},
+		Evolution: EvolutionConfig{
+			Enabled:            true,
+			ScoreThreshold:     0.7,
+			MetaTokenBudget:    10000,
+			MaxOutcomesPerRun:  10,
+			SnapshotRetainMax:  50,
+			PipelineConfigPath: "",
+			MinCooldownSeconds: 300,
+			MaxDailyRuns:       10,
+		},
 	}
 }

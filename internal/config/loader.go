@@ -41,6 +41,7 @@ func Load(path string) (*Config, error) {
 	for i, d := range cfg.Skills.SkillDirs {
 		cfg.Skills.SkillDirs[i] = resolvePath(d, configDir)
 	}
+	cfg.Evolution.PipelineConfigPath = resolvePath(cfg.Evolution.PipelineConfigPath, configDir)
 	return cfg, nil
 }
 

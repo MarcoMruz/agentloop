@@ -57,8 +57,8 @@ func buildIndexEntry(ts, role, content, conversationContextID string) IndexEntry
 	return IndexEntry{
 		Timestamp:            ts,
 		Role:                 role,
-		Keywords:             extractKeywords(content),
-		Topics:               extractTopics(content),
+		Keywords:             ExtractKeywords(content),
+		Topics:               ExtractTopics(content),
 		Summary:              summarizeEntry(content),
 		ConversationContextID: conversationContextID,
 	}
@@ -100,9 +100,9 @@ func scoreEntry(taskKeywords []string, taskTopics []string, entry IndexEntry) fl
 	return score
 }
 
-// extractKeywords returns up to 15 meaningful keywords from content.
+// ExtractKeywords returns up to 15 meaningful keywords from content.
 // Filters stopwords and short words. Domain-agnostic.
-func extractKeywords(content string) []string {
+func ExtractKeywords(content string) []string {
 	lower := strings.ToLower(content)
 
 	// Remove markdown headers, punctuation — keep -, /, . for paths/domains
@@ -133,12 +133,12 @@ func extractKeywords(content string) []string {
 	return out
 }
 
-// extractTopics matches content keywords against a predefined domain taxonomy.
+// ExtractTopics matches content keywords against a predefined domain taxonomy.
 // Covers both coding/infra and personal-assistant domains.
 // Matching: keyword and topic share a common stem of at least 4 chars
 // (handles plurals, verb forms: "scheduling"→"schedule", "emails"→"email").
-func extractTopics(content string) []string {
-	keywords := extractKeywords(content)
+func ExtractTopics(content string) []string {
+	keywords := ExtractKeywords(content)
 	seen := make(map[string]bool)
 	var matched []string
 

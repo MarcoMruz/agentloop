@@ -2,7 +2,7 @@
 
 ## What Is This Project
 
-AgentLoop is the **single source of truth** for all agent intelligence. It wraps **pi** (`@mariozechner/pi-coding-agent` v0.54.0) as its underlying coding agent runtime and adds: persistent memory, context management, prompt caching, compaction strategies, HITL gating, vault persistence, skill management, and multi-client support via Unix socket API.
+AgentLoop is the **single source of truth** for all agent intelligence. It wraps **pi** (`@mariozechner/pi-coding-agent` v0.54.0) as its underlying coding agent runtime and adds: persistent memory, context management, prompt caching, compaction strategies, HITL gating, vault persistence, skill management, self-evolving memory pipeline (MemEvolve), and multi-client support via Unix socket API.
 
 **Two binaries:**
 - **`agentloop-server`** — Long-running Go server (Unix socket). Manages sessions, memory, skills, HITL routing, vault persistence.
@@ -63,7 +63,8 @@ AgentLoop is the **single source of truth** for all agent intelligence. It wraps
 │  │  ├── memory/                                  │  │
 │  │  │   ├── users/    (per-user profiles)        │  │
 │  │  │   ├── contexts/ (conversation summaries)   │  │
-│  │  │   └── cache/    (prompt cache)             │  │
+│  │  │   ├── cache/    (prompt cache)             │  │
+│  │  │   └── evolved/  (MemEvolve artifacts)      │  │
 │  │  └── skills/       (on-demand skill files)    │  │
 │  └──────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────┘
@@ -186,7 +187,35 @@ agentloop/
 │   │   ├── profile.go              # Per-user profile (preferences, facts, patterns)
 │   │   ├── conversation.go         # Conversation log (per-user, per-day)
 │   │   ├── compaction.go           # Compaction strategies (rolling, facts, topics)
-│   │   └── cache.go                # Prompt cache (stable prefix optimization)
+│   │   ├── cache.go                # Prompt cache (stable prefix optimization)
+│   │   └── evolve/                 # MemEvolve: self-evolving memory pipeline
+│   │       ├── interfaces.go       # Encoder, Storer, Retriever, Manager interfaces
+│   │       ├── pipeline.go         # Pipeline orchestrator + atomic hot-swap
+│   │       ├── config.go           # PipelineConfig + YAML load/save
+│   │       ├── config_test.go
+│   │       ├── baseline/           # Baseline impls wrapping existing engine
+│   │       │   ├── encoder.go
+│   │       │   ├── storer.go
+│   │       │   ├── retriever.go
+│   │       │   ├── manager.go
+│   │       │   └── baseline_test.go
+│   │       ├── metrics/            # TaskOutcome scoring, clustering, Collector
+│   │       │   ├── outcome.go
+│   │       │   ├── outcome_test.go
+│   │       │   ├── collector.go
+│   │       │   ├── collector_test.go
+│   │       │   ├── cluster.go
+│   │       │   └── cluster_test.go
+│   │       ├── meta/               # MetaAgent, Applier, proposal types, prompt
+│   │       │   ├── proposal.go
+│   │       │   ├── prompt.go
+│   │       │   ├── agent.go
+│   │       │   ├── applier.go
+│   │       │   └── applier_test.go
+│   │       └── version/            # Snapshot + EvolutionLog (JSONL)
+│   │           ├── snapshot.go
+│   │           ├── log.go
+│   │           └── version_test.go
 │   │
 │   ├── skills/
 │   │   └── registry.go             # Skill registry (name → instructions + triggers)
@@ -265,6 +294,7 @@ go test ./...
 # Run specific package tests
 go test ./internal/bridge/... -v
 go test ./internal/security/... -v
+go test ./internal/memory/evolve/... -v
 
 # Security tests MUST always pass — these are mandatory
 go test ./internal/security/... -v
@@ -282,6 +312,30 @@ go test ./internal/bridge/... -v
 | `TestValidatePathAllowed` | `internal/security/policy_test.go` | Valid paths permitted |
 | `TestValidateDockerBlocked` | `internal/security/policy_test.go` | Dangerous volume mounts rejected |
 | `TestValidateDockerSubcommand` | `internal/security/policy_test.go` | Disallowed subcommands rejected |
+| `TestPipelineConfigLoad` | `internal/memory/evolve/config_test.go` | PipelineConfig YAML loading |
+| `TestPipelineConfigMergeDefaults` | `internal/memory/evolve/config_test.go` | Missing fields filled from defaults |
+| `TestBaselineEncoderWrapsExisting` | `internal/memory/evolve/baseline/baseline_test.go` | Encoder extracts keywords/topics |
+| `TestBaselineRetrieverWrapsExisting` | `internal/memory/evolve/baseline/baseline_test.go` | Retriever matches existing engine behavior |
+| `TestPipelineReloadAtomicSwap` | `internal/memory/evolve/baseline/baseline_test.go` | Baseline pipeline reload isolates old sessions |
+| `TestScorePerfectTask` | `internal/memory/evolve/metrics/outcome_test.go` | Perfect task scores 1.0 |
+| `TestScoreHITLDenials` | `internal/memory/evolve/metrics/outcome_test.go` | Each denial deducts 0.25 |
+| `TestScoreSteers` | `internal/memory/evolve/metrics/outcome_test.go` | Each steer deducts 0.20 |
+| `TestScoreAbortedTask` | `internal/memory/evolve/metrics/outcome_test.go` | Aborted status deducts 0.30 |
+| `TestScoreFloor` | `internal/memory/evolve/metrics/outcome_test.go` | Score never goes below 0.0 |
+| `TestClusterBySharedTopic` | `internal/memory/evolve/metrics/cluster_test.go` | Outcomes grouped by shared topic |
+| `TestClusterConnectedComponents` | `internal/memory/evolve/metrics/cluster_test.go` | Transitive topic links form one cluster |
+| `TestClusterNoTopicsFallsBackToKeywords` | `internal/memory/evolve/metrics/cluster_test.go` | Keyword overlap used when topics absent |
+| `TestCollectorPersist` | `internal/memory/evolve/metrics/collector_test.go` | Outcomes written to JSONL |
+| `TestCollectorRateLimitingCooldown` | `internal/memory/evolve/metrics/collector_test.go` | Cooldown blocks re-trigger |
+| `TestCollectorRateLimitingDailyCap` | `internal/memory/evolve/metrics/collector_test.go` | Daily cap respected |
+| `TestApplierAgentsMDMarkerProtection` | `internal/memory/evolve/meta/applier_test.go` | Only `EVOLVED:START/END` section overwritten |
+| `TestApplierAgentsMDCreatesMarkers` | `internal/memory/evolve/meta/applier_test.go` | Markers appended when absent from AGENTS.md |
+| `TestApplierSkillNamespacing` | `internal/memory/evolve/meta/applier_test.go` | Evolved skills prefixed `evolved-` |
+| `TestApplierSnapshotCreated` | `internal/memory/evolve/meta/applier_test.go` | Snapshot dir created before apply |
+| `TestApplierGitNotInstalled` | `internal/memory/evolve/meta/applier_test.go` | Apply succeeds gracefully when git absent |
+| `TestProposalParsingInvalid` | `internal/memory/evolve/meta/applier_test.go` | Invalid JSON proposal returns error |
+| `TestEvolutionLogAppend` | `internal/memory/evolve/version/version_test.go` | Log entries appended to JSONL |
+| `TestSnapshotContainsAllFiles` | `internal/memory/evolve/version/version_test.go` | Snapshot copies all tracked files |
 
 ### Test Conventions
 
@@ -305,6 +359,11 @@ import "github.com/user/agentloop/internal/config"
 import "github.com/user/agentloop/internal/errors"
 import "github.com/user/agentloop/internal/logging"
 import "github.com/user/agentloop/internal/memory"
+import "github.com/user/agentloop/internal/memory/evolve"
+import "github.com/user/agentloop/internal/memory/evolve/baseline"
+import "github.com/user/agentloop/internal/memory/evolve/metrics"
+import "github.com/user/agentloop/internal/memory/evolve/meta"
+import "github.com/user/agentloop/internal/memory/evolve/version"
 import "github.com/user/agentloop/internal/security"
 import "github.com/user/agentloop/internal/server"
 import "github.com/user/agentloop/internal/session"
@@ -356,6 +415,7 @@ Do NOT add dependencies without explicit approval. The project intentionally has
 | `security` | `SecurityConfig` | Allowed paths, blocked env prefixes, blocked CIDRs, docker rules, **injection protection** |
 | `skills` | `SkillsConfig` | Skill directory paths |
 | `logging` | `LoggingConfig` | Log level, log file path |
+| `evolution` | `EvolutionConfig` | MemEvolve: enabled, score threshold, meta token budget, rate limiting, snapshot retention |
 
 ---
 
@@ -383,6 +443,7 @@ JSON-RPC 2.0 server over Unix domain socket. Manages client connections and disp
 - Per-user session limits enforced in `StartSession()`
 - HITL resolution via channels: `SetPendingHITL()` → `WaitHITL()` → `ResolveHITL()`
 - LRU eviction: when `max_concurrent` is reached and `evict_lru: true`, `evictOldestLRU()` aborts the session with the oldest `LastActivity` and removes it from maps immediately; `LastActivity` is updated via `Touch()` on every `OnText` callback
+- HITL denial and steer counters (`HITLDenialCount()`, `SteerCount()`) are incremented atomically and read by the metrics `Collector` at task completion
 
 ### `internal/agent` — Agent Core
 
@@ -449,7 +510,7 @@ Note: the prompt field is `"message"`, **not** `"text"`. Using `"text"` silently
 
 All memory, caching, compaction, and context management lives here. No client ever manages memory.
 
-**`Engine`** — orchestrates profile store, conversation store, prompt cache, and compactor. `GetContextForUser()` builds the full memory context for prompts. `RecordInteraction()` saves conversation turns and updates profiles.
+**`Engine`** — orchestrates profile store, conversation store, prompt cache, and compactor. `GetContextForUser()` builds the full memory context for prompts. `RecordInteraction()` saves conversation turns and updates profiles. When a `Pipeline` is set via `SetPipeline()`, `Engine` delegates encoding, storing, retrieving, and compacting to it instead of the built-in implementations.
 
 **`ProfileStore`** — per-user YAML profiles in `vault/memory/users/`. Tracks communication style, preferences, frequent projects, fact sheet, recent topics.
 
@@ -458,6 +519,46 @@ All memory, caching, compaction, and context management lives here. No client ev
 **`Compactor`** — 3 strategies (rolling, facts, topics), all heuristic-based, no LLM calls.
 
 **`PromptCache`** — in-memory TTL cache for assembled context strings.
+
+**`ExtractKeywords` / `ExtractTopics`** — exported from `index.go`; used by MemEvolve baseline implementations.
+
+### `internal/memory/evolve` — MemEvolve Self-Evolving Pipeline
+
+Adds a self-improving memory layer that observes task outcomes and autonomously updates the memory pipeline config, skills, and AGENTS.md when performance degrades.
+
+**Core interfaces** (`interfaces.go`):
+- `Encoder` — transform an interaction into `[]MemoryUnit` (with keywords, topics, metadata)
+- `Storer` — persist/load `MemoryUnit` slices to/from vault
+- `Retriever` — select relevant units for a prompt (Jaccard + topic scoring, edges positioning)
+- `Manager` — compact/prune under token budget
+
+**`MemoryUnit`** — universal exchange type: `{ID, Timestamp, Role, Content, Keywords, Topics, Metadata, Score}`
+
+**`Pipeline`** (`pipeline.go`) — wires the four interfaces together. `PipelineHolder` holds the active `Pipeline` and supports atomic hot-swap via `Reload()`: new sessions pick up the new config while in-flight sessions continue on the old one.
+
+**`PipelineConfig`** (`config.go`) — YAML file at `vault/memory/evolved/pipeline-config.yaml`. Controls encoder strategy, retriever scoring weights, manager compaction, storer format. Hot-reloaded by the MetaAgent after each evolution.
+
+**`baseline/`** — baseline implementations that wrap the existing `Engine` behavior, ensuring zero behavior change on initial deploy:
+- `BaselineEncoder` — calls `ExtractKeywords`/`ExtractTopics` from `index.go`
+- `BaselineStorer` — delegates to `ProfileStore` + `ConversationStore`
+- `BaselineRetriever` — Jaccard keyword matching + topic bonus + recency weight + edges positioning
+- `BaselineManager` — delegates to `Compactor`
+
+**`metrics/`** — task outcome collection and scoring:
+- `TaskOutcome` — captures signals per session: HITL denials, steers, abort, error, tokens, tools, duration, keywords, topics, skills used, pipeline ID
+- `Score()` — composite score (1.0 = perfect; each HITL denial −0.25, steer −0.20, abort −0.30, error −0.20, tokens>50k −0.10, tools>30 −0.10; floor 0.0)
+- `Collector` — records outcomes to `vault/memory/evolved/metrics/{userId}-YYYY-MM-DD.jsonl`; triggers evolution callback when `score < threshold` subject to rate limiting (cooldown + daily cap)
+- `ClusterOutcomes()` — groups poor outcomes by shared topics (connected-components); falls back to keywords. Ensures the MetaAgent sees coherent context.
+
+**`meta/`** — the meta-evolution agent:
+- `MetaAgent` — serialized via mutex (one evolution at a time). `Evolve()` loads recent poor outcomes, clusters them, builds a read-only pi session with `EvolutionPrompt`, parses `EvolutionProposal` from pi's output, then calls `Applier`.
+- `Applier` — validates and applies proposals: writes `pipeline-config.yaml`, creates/updates skill files (`evolved-` prefix), patches the `<!-- EVOLVED:START -->…<!-- EVOLVED:END -->` marker section in `AGENTS.md`. Calls `Snapshotter.Take()` before applying, then `gitCommit()` after.
+- `EvolutionProposal` — `{Reasoning, ConfigChanges *PipelineConfig, SkillChanges []SkillProposal, AgentsMDPatch, Summary}`
+- `ParseProposal()` — extracts JSON from pi's `<evolved>…</evolved>` output block
+
+**`version/`** — audit trail:
+- `Snapshotter` — copies `pipeline-config.yaml`, AGENTS.md, and skills to `vault/memory/evolved/snapshots/{timestamp}/` before each evolution
+- `EvolutionLog` — append-only JSONL at `vault/memory/evolved/evolution-log.jsonl`; each entry: `{Timestamp, SessionID, Score, Summary, ConfigVersion}`
 
 ### `internal/skills` — Skills Registry
 
@@ -476,7 +577,14 @@ Skills are on-demand instruction sets loaded from the vault. Each skill director
 ├── memory/
 │   ├── users/    (per-user profiles, YAML)
 │   ├── contexts/ (conversation summaries, Markdown)
-│   └── cache/    (prompt cache, reserved)
+│   ├── cache/    (prompt cache, reserved)
+│   └── evolved/  (MemEvolve artifacts)
+│       ├── pipeline-config.yaml          (active evolved config)
+│       ├── evolution-log.jsonl           (audit trail of all evolutions)
+│       ├── metrics/
+│       │   └── {userId}-YYYY-MM-DD.jsonl (task outcome records)
+│       └── snapshots/
+│           └── {timestamp}/              (point-in-time recovery snapshots)
 └── skills/       (on-demand skill files)
 ```
 
@@ -800,3 +908,9 @@ if errors.IsUserAbort(err) { /* clean exit */ }
 13. **Pi prompt field is `"message"` not `"text"`** — sending `{"type":"prompt","text":"..."}` causes a silent `startsWith` crash in pi's internals. Always use `{"type":"prompt","message":"..."}`.
 14. **Pi's "done" signal is `agent_end`** — not a `"done"` type event. The `response` events (e.g. `{"type":"response","command":"prompt","success":true}`) are command acknowledgments, not completion signals. Streaming text comes via `message_update` events with `assistantMessageEvent.type == "text_delta"`.
 15. **`BlockedEnvPrefixes` must not block the LLM provider key** — pi needs its provider credentials (e.g. `ANTHROPIC_API_KEY`) to function. The blocked list is for secrets pi's agent should not exfiltrate, not for credentials pi itself uses. If using file-based auth (Claude subscription), this is moot, but keep it in mind for API key setups.
+16. **MemEvolve MetaAgent uses a read-only pi session** — the MetaAgent pi subprocess has no write/edit/bash tools. All file changes go through the Go `Applier`. Never give the MetaAgent write access.
+17. **AGENTS.md markers are hard boundaries** — `Applier` only writes inside `<!-- EVOLVED:START -->…<!-- EVOLVED:END -->`. Content outside the markers is untouched. If the markers are missing, `Applier` appends them. Do not remove or rename these markers.
+18. **Evolved skills are namespaced `evolved-`** — `Applier` enforces this prefix. A proposal with `name: "my-skill"` becomes `evolved-my-skill`. This prevents collisions with hand-authored skills.
+19. **Evolution is serialized, not concurrent** — `MetaAgent` holds a mutex for the duration of `Evolve()`. The `Collector` fires triggers as goroutines (`go trigger(outcome)`), so a concurrent trigger will block at the mutex and run after the current evolution finishes. In practice, the `Collector`'s rate limiter (cooldown + daily cap) prevents a burst of queued goroutines. Rate limit counters are in-memory and reset on server restart.
+20. **`PipelineHolder.Reload()` is atomic** — it swaps the `atomic.Pointer[Pipeline]` in a single store. In-flight sessions that already called `Get()` continue on the old pipeline for their duration; new `Get()` calls see the new pipeline immediately.
+21. **`ExtractKeywords` and `ExtractTopics` are exported from `memory/index.go`** — these were previously unexported. Do not move them; baseline implementations import them by package path.

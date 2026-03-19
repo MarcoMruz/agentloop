@@ -24,6 +24,8 @@ type OrchestratorOutcome struct {
 	Keywords               []string      `json:"keywords"`
 	Topics                 []string      `json:"topics"`
 	PipelineID             string        `json:"pipeline_id"`
+	TotalTokensUsed        int           `json:"total_tokens_used"`
+	TotalToolCalls         int           `json:"total_tool_calls"`
 	Duration               time.Duration `json:"duration"`
 }
 
@@ -42,8 +44,8 @@ func (o *OrchestratorOutcome) ToTaskOutcome() metrics.TaskOutcome {
 		HITLApprovals: o.TotalHITLApprovals,
 		SteerCount:    o.TotalSteers,
 		FinalStatus:   finalStatus,
-		TokensUsed:    0,
-		ToolCalls:     0,
+		TokensUsed:    o.TotalTokensUsed,
+		ToolCalls:     o.TotalToolCalls,
 		Duration:      o.Duration,
 		TaskKeywords:  o.Keywords,
 		TaskTopics:    o.Topics,

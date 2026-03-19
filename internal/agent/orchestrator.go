@@ -547,10 +547,12 @@ func (o *Orchestrator) buildJudgePrompt(task string, plan *Plan, summaries []Wor
 
 // buildOutcome constructs an OrchestratorOutcome from the run state.
 func (o *Orchestrator) buildOutcome(octx OrchestratorCtx, task string, iterations int, finalPass bool, summaries []WorkerSummary, verdict *JudgeVerdict, evolCount int) *OrchestratorOutcome {
-	totalDenials, totalApprovals, maxTokens := 0, 0, 0
+	totalDenials, totalApprovals, maxTokens, totalTokens, totalTools := 0, 0, 0, 0, 0
 	for _, s := range summaries {
 		totalDenials += s.HITLDenials
 		totalApprovals += s.HITLApprovals
+		totalTokens += s.TokensUsed
+		totalTools += len(s.ToolsUsed)
 		if s.TokensUsed > maxTokens {
 			maxTokens = s.TokensUsed
 		}
@@ -580,6 +582,8 @@ func (o *Orchestrator) buildOutcome(octx OrchestratorCtx, task string, iteration
 		Keywords:               keywords,
 		Topics:                 topics,
 		PipelineID:             o.pipelineVersion(),
+		TotalTokensUsed:        totalTokens,
+		TotalToolCalls:         totalTools,
 		Duration:               time.Since(octx.StartedAt),
 	}
 }

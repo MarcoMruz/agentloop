@@ -59,6 +59,9 @@ func main() {
 		cfg.Memory.ConversationRetainDays,
 	)
 
+	// Install default agent instructions to vault (if not already present)
+	v.InstallDefaultAgents("configs/agents")
+
 	// Initialize skills registry
 	sk := skills.NewRegistry(cfg.Skills.SkillDirs)
 

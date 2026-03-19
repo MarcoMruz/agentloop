@@ -6,12 +6,18 @@ import (
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
 )
 
+type OrchestratorPatch struct {
+	Role    string `json:"role"`    // "planner", "worker", "judge"
+	Content string `json:"content"` // markdown body for {role}-evolved.md
+}
+
 type EvolutionProposal struct {
-	Reasoning     string                `json:"reasoning"`
-	ConfigChanges *evolve.PipelineConfig `json:"config_changes"`
-	SkillChanges  []SkillProposal       `json:"skill_changes"`
-	AgentsMDPatch string                `json:"agents_md_patch"`
-	Summary       string                `json:"summary"`
+	Reasoning          string                `json:"reasoning"`
+	ConfigChanges      *evolve.PipelineConfig `json:"config_changes"`
+	SkillChanges       []SkillProposal       `json:"skill_changes"`
+	AgentsMDPatch      string                `json:"agents_md_patch"`
+	Summary            string                `json:"summary"`
+	OrchestratorPatches []OrchestratorPatch  `json:"orchestrator_patches"`
 }
 
 type SkillProposal struct {

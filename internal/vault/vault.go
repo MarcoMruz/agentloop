@@ -23,3 +23,6 @@ func New(rootPath string) (*Vault, error) {
 }
 
 func (v *Vault) SessionsDir() string { return filepath.Join(v.RootPath, "sessions") }
+
+// Path returns the vault root directory path.
+func (v *Vault) Path() string { return v.RootPath }

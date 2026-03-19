@@ -9,13 +9,26 @@ import (
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/metrics"
 )
 
+type OrchestratorEvolutionSignals struct {
+	Iterations          int
+	FinalPass           bool
+	PlanStepCount       int
+	ActualStepsNeeded   int
+	MaxSummaryTokens    int
+	JudgeGapSpecificity int
+	EvolutionCount      int
+	WorkerSummaries     []string
+	JudgeGaps           []string
+}
+
 type EvolutionPrompt struct {
-	SystemContext string
-	Outcomes      []metrics.TaskOutcome
-	CurrentConfig *evolve.PipelineConfig
-	CurrentSkills []SkillSummary
-	AgentsMD      string
-	Constraints   []string
+	SystemContext       string
+	Outcomes            []metrics.TaskOutcome
+	CurrentConfig       *evolve.PipelineConfig
+	CurrentSkills       []SkillSummary
+	AgentsMD            string
+	Constraints         []string
+	OrchestratorSignals *OrchestratorEvolutionSignals
 }
 
 func BuildEvolutionPrompt(p EvolutionPrompt) string {
@@ -38,6 +51,24 @@ func BuildEvolutionPrompt(p EvolutionPrompt) string {
 		}
 		if len(o.TaskKeywords) > 0 {
 			sb.WriteString(fmt.Sprintf("- Keywords: %s\n", strings.Join(o.TaskKeywords, ", ")))
+		}
+		sb.WriteString("\n")
+	}
+
+	if p.OrchestratorSignals != nil {
+		s := p.OrchestratorSignals
+		sb.WriteString("## Orchestrator Signals\n\n")
+		sb.WriteString(fmt.Sprintf("- Iterations: %d\n", s.Iterations))
+		sb.WriteString(fmt.Sprintf("- Final Pass: %v\n", s.FinalPass))
+		sb.WriteString(fmt.Sprintf("- Plan Steps: %d (actual needed: %d)\n", s.PlanStepCount, s.ActualStepsNeeded))
+		sb.WriteString(fmt.Sprintf("- Max Worker Summary Tokens: %d\n", s.MaxSummaryTokens))
+		sb.WriteString(fmt.Sprintf("- Judge Gap Specificity: %d/5\n", s.JudgeGapSpecificity))
+		sb.WriteString(fmt.Sprintf("- Evolutions This Run: %d\n", s.EvolutionCount))
+		if len(s.JudgeGaps) > 0 {
+			sb.WriteString("\n### Judge Gaps (failed iterations)\n\n")
+			for _, g := range s.JudgeGaps {
+				sb.WriteString(fmt.Sprintf("- %s\n", g))
+			}
 		}
 		sb.WriteString("\n")
 	}
@@ -76,7 +107,10 @@ func BuildEvolutionPrompt(p EvolutionPrompt) string {
     {"action": "create|update|delete", "name": "evolved-NAME", "triggers": [...], "description": "...", "content": "..."}
   ],
   "agents_md_patch": "New content for the EVOLVED section (or empty)",
-  "summary": "One-line summary for git commit"
+  "summary": "One-line summary for git commit",
+  "orchestrator_patches": [
+    {"role": "planner|worker|judge", "content": "Evolved instructions (abstract, project-agnostic)"}
+  ]
 }`)
 	sb.WriteString("\n```\n")
 
@@ -88,10 +122,14 @@ func DefaultSystemContext() string {
 
 Your job: analyze poor task outcomes and propose improvements to make future tasks succeed.
 
-You can propose three types of changes:
+You can propose four types of changes:
 1. **Pipeline config changes** — adjust retrieval parameters, compaction strategy, keyword limits, topic extensions
 2. **Skill changes** — create or update skills (behavioral patterns) that will be loaded into future agent prompts
 3. **AGENTS.md changes** — add learned patterns to the agent's core instructions
+4. **Orchestrator agent patches** — update Planner, Worker, or Judge instructions to address systemic issues
+   - Planner patches: improve task decomposition, specificity of steps, success criteria
+   - Worker patches: improve execution patterns, avoid repeated HITL denials
+   - Judge patches: improve gap specificity, evidence requirements
 
 Guidelines:
 - Focus on the specific topic cluster of failures. Don't make broad changes for narrow problems.

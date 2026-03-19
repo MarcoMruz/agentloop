@@ -10,7 +10,8 @@ type Config struct {
 	Security SecurityConfig `mapstructure:"security"`
 	Skills   SkillsConfig   `mapstructure:"skills"`
 	Logging   LoggingConfig   `mapstructure:"logging"`
-	Evolution EvolutionConfig `mapstructure:"evolution"`
+	Evolution    EvolutionConfig    `mapstructure:"evolution"`
+	Orchestrator OrchestratorConfig `mapstructure:"orchestrator"`
 }
 
 type ServerConfig struct {
@@ -110,6 +111,15 @@ type EvolutionConfig struct {
 	PipelineConfigPath string  `mapstructure:"pipeline_config_path"`
 	MinCooldownSeconds int     `mapstructure:"min_cooldown_seconds"`
 	MaxDailyRuns       int     `mapstructure:"max_daily_runs"`
+}
+
+type OrchestratorConfig struct {
+	Planner          PiConfig `mapstructure:"planner"`
+	Worker           PiConfig `mapstructure:"worker"`
+	Judge            PiConfig `mapstructure:"judge"`
+	WorkerPoolSize   int      `mapstructure:"worker_pool_size"`
+	MaxIterations    int      `mapstructure:"max_iterations"`
+	SummaryMaxTokens int      `mapstructure:"summary_max_tokens"`
 }
 
 func Defaults() *Config {
@@ -274,6 +284,26 @@ func Defaults() *Config {
 			PipelineConfigPath: "",
 			MinCooldownSeconds: 300,
 			MaxDailyRuns:       10,
+		},
+		Orchestrator: OrchestratorConfig{
+			Planner: PiConfig{
+				Binary:   "pi",
+				Provider: "anthropic",
+				Model:    "claude-opus-4-6",
+			},
+			Worker: PiConfig{
+				Binary:   "pi",
+				Provider: "anthropic",
+				Model:    "claude-sonnet-4-6",
+			},
+			Judge: PiConfig{
+				Binary:   "pi",
+				Provider: "anthropic",
+				Model:    "claude-opus-4-6",
+			},
+			WorkerPoolSize:   4,
+			MaxIterations:    3,
+			SummaryMaxTokens: 1500,
 		},
 	}
 }

@@ -6,11 +6,11 @@ import (
 	"log/slog"
 	"sync"
 
-	"time"
-
 	"github.com/MarcoMruz/agentloop/internal/agent"
 	"github.com/MarcoMruz/agentloop/internal/config"
 	"github.com/MarcoMruz/agentloop/internal/memory"
+	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
+	"github.com/MarcoMruz/agentloop/internal/memory/evolve/meta"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/metrics"
 	"github.com/MarcoMruz/agentloop/internal/skills"
 	"github.com/MarcoMruz/agentloop/internal/vault"
@@ -48,10 +48,13 @@ type Manager struct {
 	piCfg    config.PiConfig
 	secCfg   config.SecurityConfig
 	hitlCfg  config.HITLConfig
+	orchCfg  config.OrchestratorConfig
 	vault    *vault.Vault
 	memory   *memory.Engine
 	skills   *skills.Registry
 	collector *metrics.Collector
+	pipeline  *evolve.PipelineHolder
+	metaAgent *meta.MetaAgent
 	sessions  map[string]*Session
 	userMap   map[string][]string // userId → active sessionIds
 	mu        sync.RWMutex
@@ -63,6 +66,7 @@ func NewManager(cfg *config.Config, v *vault.Vault, mem *memory.Engine, sk *skil
 		piCfg:    cfg.Pi,
 		secCfg:   cfg.Security,
 		hitlCfg:  cfg.HITL,
+		orchCfg:  cfg.Orchestrator,
 		vault:    v,
 		memory:   mem,
 		skills:   sk,
@@ -74,6 +78,16 @@ func NewManager(cfg *config.Config, v *vault.Vault, mem *memory.Engine, sk *skil
 // SetMetricsCollector sets the evolution metrics collector.
 func (m *Manager) SetMetricsCollector(c *metrics.Collector) {
 	m.collector = c
+}
+
+// SetPipeline sets the MemEvolve pipeline holder.
+func (m *Manager) SetPipeline(p *evolve.PipelineHolder) {
+	m.pipeline = p
+}
+
+// SetMetaAgent sets the MemEvolve meta-evolution agent.
+func (m *Manager) SetMetaAgent(ma *meta.MetaAgent) {
+	m.metaAgent = ma
 }
 
 func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session, error) {
@@ -103,8 +117,11 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 	go func() {
 		defer m.cleanupSession(sess)
 
-		pb := agent.NewPromptBuilder(m.memory, m.skills)
-		agentCore := agent.New(m.piCfg, m.secCfg, m.hitlCfg, pb, agent.Callbacks{
+		loader := agent.NewAgentLoader(m.vault.Path())
+		orch := agent.NewOrchestrator(loader, m.memory, m.skills, m.pipeline, m.collector, m.metaAgent, m.secCfg, m.hitlCfg)
+		octx := agent.NewOrchestratorCtx(sess.ID, req.UserID, req.WorkDir, req.Source, sess.ConversationContextID, m.orchCfg)
+
+		orchResult := orch.Run(ctx, octx, req.Text, sess, agent.Callbacks{
 			OnText: func(content string) {
 				sess.Touch()
 				req.Broadcaster.Broadcast(sess.ID, "event.text", map[string]any{
@@ -167,7 +184,20 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 			},
 		})
 
-		result := agentCore.Run(ctx, req.UserID, req.Text, req.WorkDir, sess)
+		// Convert OrchestratorResult to RunResult for vault persistence
+		var result agent.RunResult
+		if orchResult.SingleResult != nil {
+			result = *orchResult.SingleResult
+		} else {
+			result = agent.RunResult{
+				Output:    orchResult.BuildOutputSummary(),
+				ToolsUsed: orchResult.CollectToolsUsed(),
+				Stats: agent.RunStats{
+					Tokens:   orchResult.TotalTokens,
+					Duration: orchResult.TotalDuration,
+				},
+			}
+		}
 		sess.SetResult(result)
 
 		// Persist to vault
@@ -181,23 +211,6 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 
 		// Update memory with this interaction
 		m.memory.RecordInteraction(req.UserID, req.Text, result.Output, result.ToolsUsed, sess.ConversationContextID)
-
-		// Record task outcome for evolution metrics
-		if m.collector != nil {
-			m.collector.Record(metrics.TaskOutcome{
-				SessionID:    sess.ID,
-				UserID:       sess.UserID,
-				Timestamp:    time.Now(),
-				Duration:     time.Since(sess.StartedAt),
-				TokensUsed:   result.Stats.Tokens,
-				ToolCalls:    result.Stats.ToolCalls,
-				HITLDenials:  sess.HITLDenialCount(),
-				SteerCount:   sess.SteerCount(),
-				FinalStatus:  string(sess.State),
-				TaskKeywords: memory.ExtractKeywords(sess.Task),
-				TaskTopics:   memory.ExtractTopics(sess.Task),
-			})
-		}
 	}()
 
 	return sess, nil

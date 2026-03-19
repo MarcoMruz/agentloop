@@ -152,6 +152,77 @@ func TestProposalParsingInvalid(t *testing.T) {
 	}
 }
 
+func TestApplierOrchestratorPatchDefaultAgent(t *testing.T) {
+	dir := t.TempDir()
+	a := NewApplier(dir, "", dir)
+
+	patch := OrchestratorPatch{
+		Role:    "worker",
+		Content: "## Worker Instructions\n\nDo the work carefully.",
+	}
+	err := a.ApplyOrchestratorPatch(patch)
+	if err != nil {
+		t.Fatalf("ApplyOrchestratorPatch failed: %v", err)
+	}
+
+	path := filepath.Join(dir, "agents", "worker-evolved.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("expected file at %s: %v", path, err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "role: worker") {
+		t.Fatal("expected role in frontmatter")
+	}
+	if !strings.Contains(content, "Worker Instructions") {
+		t.Fatal("expected content body in file")
+	}
+}
+
+func TestApplierOrchestratorPatchProjectAgent(t *testing.T) {
+	dir := t.TempDir()
+	customDir := filepath.Join(dir, "custom-agents")
+	a := NewApplier(dir, "", dir)
+
+	patch := OrchestratorPatch{
+		Role:    "planner",
+		Content: "## Planner Instructions\n\nPlan carefully.",
+	}
+	err := a.ApplyOrchestratorPatchToDir(customDir, patch)
+	if err != nil {
+		t.Fatalf("ApplyOrchestratorPatchToDir failed: %v", err)
+	}
+
+	path := filepath.Join(customDir, "planner-evolved.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("expected file at %s: %v", path, err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "role: planner") {
+		t.Fatal("expected role in frontmatter")
+	}
+	if !strings.Contains(content, "Planner Instructions") {
+		t.Fatal("expected content body in file")
+	}
+}
+
+func TestApplierOrchestratorPatchInvalidRole(t *testing.T) {
+	dir := t.TempDir()
+	a := NewApplier(dir, "", dir)
+
+	patch := OrchestratorPatch{
+		Role:    "hacker",
+		Content: "Do evil things.",
+	}
+	err := a.ApplyOrchestratorPatch(patch)
+	if err == nil {
+		t.Fatal("expected error for invalid role 'hacker'")
+	}
+}
+
 func TestProposalParsingValid(t *testing.T) {
 	input := `Here is my proposal:
 {"reasoning":"auth failures","config_changes":{"version":2},"skill_changes":[],"agents_md_patch":"","summary":"tune auth retrieval"}

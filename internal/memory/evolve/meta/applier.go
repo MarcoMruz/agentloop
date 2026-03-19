@@ -57,6 +57,12 @@ func (a *Applier) Apply(proposal *EvolutionProposal) error {
 		}
 	}
 
+	for _, op := range proposal.OrchestratorPatches {
+		if err := a.ApplyOrchestratorPatch(op); err != nil {
+			slog.Warn("orchestrator patch failed", "role", op.Role, "error", err)
+		}
+	}
+
 	a.gitCommit(proposal.Summary)
 	a.logEvolution(proposal)
 
@@ -167,6 +173,30 @@ func (a *Applier) logEvolution(proposal *EvolutionProposal) {
 	defer f.Close()
 	f.Write(data)
 	f.Write([]byte("\n"))
+}
+
+var validOrchestratorRoles = map[string]bool{
+	"planner": true,
+	"worker":  true,
+	"judge":   true,
+}
+
+// ApplyOrchestratorPatch writes an evolved agent file to {vaultDir}/agents/{role}-evolved.md.
+func (a *Applier) ApplyOrchestratorPatch(patch OrchestratorPatch) error {
+	agentsDir := filepath.Join(a.vaultPath, "agents")
+	return a.ApplyOrchestratorPatchToDir(agentsDir, patch)
+}
+
+// ApplyOrchestratorPatchToDir writes an evolved agent file to a specific directory.
+func (a *Applier) ApplyOrchestratorPatchToDir(agentsDir string, patch OrchestratorPatch) error {
+	if !validOrchestratorRoles[patch.Role] {
+		return fmt.Errorf("invalid orchestrator role: %s (must be planner, worker, or judge)", patch.Role)
+	}
+	os.MkdirAll(agentsDir, 0755)
+	content := fmt.Sprintf("---\nname: %s-evolved\nrole: %s\ndescription: Evolved %s instructions\n---\n\n%s\n",
+		patch.Role, patch.Role, patch.Role, patch.Content)
+	path := filepath.Join(agentsDir, patch.Role+"-evolved.md")
+	return os.WriteFile(path, []byte(content), 0644)
 }
 
 func buildSkillMD(sp SkillProposal) string {

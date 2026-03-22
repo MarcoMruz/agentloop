@@ -7,11 +7,13 @@ import (
 	"sync"
 
 	"github.com/MarcoMruz/agentloop/internal/agent"
+	"github.com/MarcoMruz/agentloop/internal/bridge"
 	"github.com/MarcoMruz/agentloop/internal/config"
 	"github.com/MarcoMruz/agentloop/internal/memory"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/meta"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/metrics"
+	"github.com/MarcoMruz/agentloop/internal/memory/notes"
 	"github.com/MarcoMruz/agentloop/internal/skills"
 	"github.com/MarcoMruz/agentloop/internal/vault"
 )
@@ -181,6 +183,46 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 				req.Broadcaster.Broadcast(sess.ID, "event.error", map[string]any{
 					"sessionId": sess.ID, "message": msg,
 				})
+			},
+			OnMemoryTool: func(ev bridge.MemoryToolEvent) {
+				go func() {
+					userID := sess.UserID
+					switch ev.Operation {
+					case "add":
+						note := notes.AtomicNote{
+							UserID:   userID,
+							Content:  ev.Content,
+							Keywords: ev.Keywords,
+							Tags:     ev.Tags,
+						}
+						if _, err := m.memory.AddNote(note); err != nil {
+							slog.Debug("memory Add_memory failed", "err", err)
+						}
+					case "update":
+						if ev.NoteID == "" {
+							slog.Debug("memory update: missing note ID")
+							return
+						}
+						note := notes.AtomicNote{
+							ID:       ev.NoteID,
+							UserID:   userID,
+							Content:  ev.Content,
+							Keywords: ev.Keywords,
+							Tags:     ev.Tags,
+						}
+						if err := m.memory.UpdateNote(note); err != nil {
+							slog.Debug("memory Update_memory failed", "err", err)
+						}
+					case "delete":
+						if ev.NoteID == "" {
+							slog.Debug("memory delete: missing note ID")
+							return
+						}
+						if err := m.memory.DeleteNote(userID, ev.NoteID); err != nil {
+							slog.Debug("memory Delete_memory failed", "err", err)
+						}
+					}
+				}()
 			},
 		})
 

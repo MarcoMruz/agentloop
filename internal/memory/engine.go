@@ -97,6 +97,32 @@ func (e *Engine) RecordInteraction(userId string, userMsg string, agentReply str
 
 	// Update profile with learned patterns (heuristic, no LLM)
 	e.profiles.UpdateFromInteraction(userId, userMsg, toolsUsed)
+
+	// ACE delta extraction: asynchronously distill conversation into one atomic note.
+	if e.llmClient != nil && e.noteStore != nil {
+		go func() {
+			conversation := fmt.Sprintf("user: %s\nassistant: %s", userMsg, agentReply)
+			delta, err := extractDelta(e.llmClient, conversation)
+			if err != nil || delta == "" {
+				return
+			}
+			keywords := ExtractKeywords(delta)
+			topics := ExtractTopics(delta)
+			note := notes.AtomicNote{
+				UserID:      userId,
+				Content:     delta,
+				Keywords:    keywords,
+				Tags:        topics,
+				Description: "auto-extracted preference delta",
+			}
+			if emb, err := e.llmClient.Embed(delta); err == nil && emb != nil {
+				note.Embedding = emb
+			}
+			if _, err := e.noteStore.Add(note); err != nil {
+				slog.Debug("failed to save delta note", "err", err)
+			}
+		}()
+	}
 }
 
 // SetPipeline sets the MemEvolve pipeline for delegation.

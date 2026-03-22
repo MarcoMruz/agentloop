@@ -1,8 +1,11 @@
 package memory
 
 import (
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/MarcoMruz/agentloop/internal/memory/notes"
 )
 
 func TestRecordInteraction_TagsContextID(t *testing.T) {
@@ -90,5 +93,51 @@ func TestGetContextForUserAndConversationContext_EmptyContextID_FallsBack(t *tes
 	_, err := eng.GetContextForUserAndConversationContext("marco", "")
 	if err != nil {
 		t.Fatalf("unexpected error with empty contextID: %v", err)
+	}
+}
+
+func TestAddNoteLinksRelatedNotes(t *testing.T) {
+	dir := t.TempDir()
+	eng := NewEngine(dir, 4000, "rolling", 30)
+	store := notes.NewInMemoryNoteStore()
+	eng.SetNoteStore(store)
+
+	// Add two pre-existing notes
+	id1, _ := eng.AddNote(notes.AtomicNote{
+		UserID:   "marco",
+		Content:  "user prefers Go for backend services",
+		Keywords: []string{"go", "backend"},
+		Tags:     []string{"preference"},
+	})
+	id2, _ := eng.AddNote(notes.AtomicNote{
+		UserID:   "marco",
+		Content:  "user dislikes Java",
+		Keywords: []string{"java", "backend"},
+		Tags:     []string{"preference"},
+	})
+
+	// Add a new note that shares keywords with both
+	id3, _ := eng.AddNote(notes.AtomicNote{
+		UserID:   "marco",
+		Content:  "user uses Go for all new backend projects",
+		Keywords: []string{"go", "backend", "projects"},
+		Tags:     []string{"preference"},
+	})
+
+	// id3 should be connected to id1 and id2
+	n3, err := store.Get(id3)
+	if err != nil {
+		t.Fatalf("Get id3: %v", err)
+	}
+	hasID1 := slices.Contains(n3.Connections, id1)
+	hasID2 := slices.Contains(n3.Connections, id2)
+	if !hasID1 || !hasID2 {
+		t.Errorf("expected id3 connections to include id1 and id2, got %v", n3.Connections)
+	}
+
+	// id1 should be back-linked to id3
+	n1, _ := store.Get(id1)
+	if !slices.Contains(n1.Connections, id3) {
+		t.Errorf("expected id1 to be back-linked to id3, got %v", n1.Connections)
 	}
 }

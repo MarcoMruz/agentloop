@@ -148,13 +148,63 @@ func (e *Engine) ForgetUserFact(userId string, key string) error {
 	return e.profiles.DeleteFact(userId, key)
 }
 
-// AddNote persists an atomic note and invalidates the user's context cache.
+// linkNote adds a bidirectional connection between newID and relatedID.
+// No-ops if either note cannot be loaded or the connection already exists.
+func (e *Engine) linkNote(newID, relatedID string) {
+	if e.noteStore == nil {
+		return
+	}
+	n, err := e.noteStore.Get(newID)
+	if err != nil || n == nil {
+		return
+	}
+	r, err := e.noteStore.Get(relatedID)
+	if err != nil || r == nil {
+		return
+	}
+
+	addUnique := func(ids []string, id string) []string {
+		for _, x := range ids {
+			if x == id {
+				return ids
+			}
+		}
+		return append(ids, id)
+	}
+	n.Connections = addUnique(n.Connections, relatedID)
+	r.Connections = addUnique(r.Connections, newID)
+	_ = e.noteStore.Update(*n)
+	_ = e.noteStore.Update(*r)
+}
+
+// AddNote persists an atomic note, invalidates the user's context cache,
+// and auto-links the note to the top-3 keyword-related existing notes.
 func (e *Engine) AddNote(note notes.AtomicNote) (string, error) {
 	if e.noteStore == nil {
 		return "", fmt.Errorf("note store not configured")
 	}
+	id, err := e.noteStore.Add(note)
+	if err != nil {
+		return "", err
+	}
 	e.cache.Delete("ctx:" + note.UserID)
-	return e.noteStore.Add(note)
+
+	// Semantic auto-linking: connect to top-3 keyword-related existing notes
+	if len(note.Keywords) > 0 {
+		related, _ := e.noteStore.SearchByKeywords(note.UserID, note.Keywords, 4) // 4 = top-3 + possibly self
+		count := 0
+		for _, r := range related {
+			if r.ID == id {
+				continue // skip self
+			}
+			if count >= 3 {
+				break
+			}
+			e.linkNote(id, r.ID)
+			count++
+		}
+	}
+	return id, nil
 }
 
 // UpdateNote updates an existing atomic note and invalidates the user's context cache.

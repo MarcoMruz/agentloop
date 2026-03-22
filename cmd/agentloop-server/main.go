@@ -11,6 +11,8 @@ import (
 	"github.com/MarcoMruz/agentloop/internal/config"
 	"github.com/MarcoMruz/agentloop/internal/logging"
 	"github.com/MarcoMruz/agentloop/internal/memory"
+	"github.com/MarcoMruz/agentloop/internal/memory/llm"
+	"github.com/MarcoMruz/agentloop/internal/memory/notes"
 	"github.com/MarcoMruz/agentloop/internal/server"
 	"github.com/MarcoMruz/agentloop/internal/session"
 	"github.com/MarcoMruz/agentloop/internal/skills"
@@ -58,6 +60,25 @@ func main() {
 		cfg.Memory.CompactionStrategy,
 		cfg.Memory.ConversationRetainDays,
 	)
+
+	// Background LLM client (pi subprocess tier for memory ops)
+	var llmClient llm.LLMClient = &llm.NoopClient{}
+	if cfg.Memory.Agent.Enabled {
+		agentPiCfg := config.PiConfig{
+			Binary:   cfg.Memory.Agent.Binary,
+			Provider: cfg.Memory.Agent.Provider,
+			Model:    cfg.Memory.Agent.Model,
+		}
+		llmClient = llm.NewPiCompletionClient(agentPiCfg)
+	}
+	mem.SetLLMClient(llmClient)
+
+	// Atomic notes store (SQLite + sqlite-vec)
+	if sqliteStore, err := notes.NewSQLiteNoteStore(v.NotesDir(), cfg.Memory.EmbeddingDims); err == nil {
+		mem.SetNoteStore(sqliteStore)
+	} else {
+		slog.Warn("atomic notes store unavailable, running without it", "err", err)
+	}
 
 	// Install default agent instructions to vault (if not already present)
 	v.InstallDefaultAgents("configs/agents")

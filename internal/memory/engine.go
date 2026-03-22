@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
+	"github.com/MarcoMruz/agentloop/internal/memory/llm"
+	"github.com/MarcoMruz/agentloop/internal/memory/notes"
 )
 
 type Engine struct {
@@ -17,6 +19,8 @@ type Engine struct {
 	compactor     *Compactor
 	maxCtxTokens  int
 	pipeline      *evolve.PipelineHolder
+	noteStore     notes.NoteStore
+	llmClient     llm.LLMClient
 }
 
 func NewEngine(vaultPath string, maxContextTokens int, compactionStrategy string, retainDays int) *Engine {
@@ -100,6 +104,12 @@ func (e *Engine) SetPipeline(p *evolve.PipelineHolder) {
 	e.pipeline = p
 }
 
+// SetNoteStore wires in an atomic notes store for vector-augmented retrieval.
+func (e *Engine) SetNoteStore(s notes.NoteStore) { e.noteStore = s }
+
+// SetLLMClient wires in the background local LLM client for embeddings and deltas.
+func (e *Engine) SetLLMClient(c llm.LLMClient) { e.llmClient = c }
+
 // UpdateUserFact allows explicit profile updates (e.g. "remember I prefer TypeScript").
 func (e *Engine) UpdateUserFact(userId string, key string, value string) error {
 	e.cache.Delete("ctx:" + userId)
@@ -110,6 +120,33 @@ func (e *Engine) UpdateUserFact(userId string, key string, value string) error {
 func (e *Engine) ForgetUserFact(userId string, key string) error {
 	e.cache.Delete("ctx:" + userId)
 	return e.profiles.DeleteFact(userId, key)
+}
+
+// AddNote persists an atomic note and invalidates the user's context cache.
+func (e *Engine) AddNote(note notes.AtomicNote) (string, error) {
+	if e.noteStore == nil {
+		return "", fmt.Errorf("note store not configured")
+	}
+	e.cache.Delete("ctx:" + note.UserID)
+	return e.noteStore.Add(note)
+}
+
+// UpdateNote updates an existing atomic note and invalidates the user's context cache.
+func (e *Engine) UpdateNote(note notes.AtomicNote) error {
+	if e.noteStore == nil {
+		return fmt.Errorf("note store not configured")
+	}
+	e.cache.Delete("ctx:" + note.UserID)
+	return e.noteStore.Update(note)
+}
+
+// DeleteNote removes an atomic note by ID and invalidates the user's context cache.
+func (e *Engine) DeleteNote(userID, noteID string) error {
+	if e.noteStore == nil {
+		return fmt.Errorf("note store not configured")
+	}
+	e.cache.Delete("ctx:" + userID)
+	return e.noteStore.Delete(noteID)
 }
 
 // GetContextForUserWithTask builds a task-aware memory context.
@@ -209,6 +246,39 @@ func (e *Engine) GetContextForUserWithTask(userId string, task string) (string, 
 			sb.WriteString("\n\n## Recent context\n")
 		}
 		sb.WriteString(strings.Join(historyLines, "\n"))
+	}
+
+	// Augment with atomic notes: vector search first (requires LLM), keyword fallback always runs.
+	if e.noteStore != nil {
+		var noteLines []string
+		seen := make(map[string]bool)
+
+		if e.llmClient != nil {
+			if emb, err := e.llmClient.Embed(task); err == nil && emb != nil {
+				if vectorNotes, err := e.noteStore.SearchByVector(userId, emb, 5); err == nil {
+					for _, n := range vectorNotes {
+						if !seen[n.ID] {
+							noteLines = append(noteLines, fmt.Sprintf("- [%s] %s", n.ID, n.Content))
+							seen[n.ID] = true
+						}
+					}
+				}
+			}
+		}
+
+		if kwNotes, err := e.noteStore.SearchByKeywords(userId, taskKw, 5); err == nil {
+			for _, n := range kwNotes {
+				if !seen[n.ID] {
+					noteLines = append(noteLines, fmt.Sprintf("- [%s] %s", n.ID, n.Content))
+					seen[n.ID] = true
+				}
+			}
+		}
+
+		if len(noteLines) > 0 {
+			sb.WriteString(fmt.Sprintf("\n\n## Memory Notes (%d relevant)\n", len(noteLines)))
+			sb.WriteString(strings.Join(noteLines, "\n"))
+		}
 	}
 
 	ctx := sb.String()

@@ -25,17 +25,18 @@ type HITLHandler func(event RPCEvent) (bool, error)
 
 // PiBridge manages the pi subprocess and RPC communication.
 type PiBridge struct {
-	cfg     config.PiConfig
-	secCfg  config.SecurityConfig
-	hitlCfg config.HITLConfig
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	stdout  io.ReadCloser
-	stderr  io.ReadCloser
-	mu      sync.Mutex
-	onEvent EventHandler
-	onHITL  HITLHandler
-	done    chan struct{}
+	cfg          config.PiConfig
+	secCfg       config.SecurityConfig
+	hitlCfg      config.HITLConfig
+	cmd          *exec.Cmd
+	stdin        io.WriteCloser
+	stdout       io.ReadCloser
+	stderr       io.ReadCloser
+	mu           sync.Mutex
+	onEvent      EventHandler
+	onHITL       HITLHandler
+	onMemoryTool MemoryToolHandler
+	done         chan struct{}
 }
 
 // New creates a PiBridge but does not start it. Call Start() separately.
@@ -53,6 +54,9 @@ func (b *PiBridge) SetEventHandler(h EventHandler) { b.onEvent = h }
 
 // SetHITLHandler registers the callback for HITL approval requests.
 func (b *PiBridge) SetHITLHandler(h HITLHandler) { b.onHITL = h }
+
+// SetMemoryToolHandler registers the callback for memory tool interception.
+func (b *PiBridge) SetMemoryToolHandler(h MemoryToolHandler) { b.onMemoryTool = h }
 
 // Start launches the pi subprocess in RPC mode.
 func (b *PiBridge) Start(ctx context.Context, workDir string) error {
@@ -226,7 +230,53 @@ func (b *PiBridge) readEvents() {
 				slog.Warn("event handler error", "type", event.Type, "error", err)
 			}
 		}
+
+		// Memory tool interception: fire-and-forget side effect for Add/Update/Delete_memory
+		if isMemoryTool(event.ToolName) && b.onMemoryTool != nil {
+			b.onMemoryTool(memoryToolEventFromArgs(event.ToolName, event.Args))
+		}
 	}
+}
+
+func isMemoryTool(name string) bool {
+	return name == "Add_memory" || name == "Update_memory" || name == "Delete_memory"
+}
+
+func memoryToolOperation(name string) string {
+	switch name {
+	case "Add_memory":
+		return "add"
+	case "Update_memory":
+		return "update"
+	case "Delete_memory":
+		return "delete"
+	}
+	return ""
+}
+
+func memoryToolEventFromArgs(toolName string, args map[string]any) MemoryToolEvent {
+	ev := MemoryToolEvent{Operation: memoryToolOperation(toolName)}
+	if v, ok := args["content"].(string); ok {
+		ev.Content = v
+	}
+	if v, ok := args["id"].(string); ok {
+		ev.NoteID = v
+	}
+	if v, ok := args["keywords"].([]any); ok {
+		for _, k := range v {
+			if s, ok := k.(string); ok {
+				ev.Keywords = append(ev.Keywords, s)
+			}
+		}
+	}
+	if v, ok := args["tags"].([]any); ok {
+		for _, t := range v {
+			if s, ok := t.(string); ok {
+				ev.Tags = append(ev.Tags, s)
+			}
+		}
+	}
+	return ev
 }
 
 func (b *PiBridge) readStderr() {

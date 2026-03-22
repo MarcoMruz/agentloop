@@ -99,3 +99,40 @@ func TestExtensionUIResponseSerialization(t *testing.T) {
 		t.Fatalf("unexpected: %s", string(data))
 	}
 }
+
+func TestMemoryToolEventFromToolArgs(t *testing.T) {
+	event := MemoryToolEvent{
+		Operation: "add",
+		Content:   "user prefers dark mode",
+		Keywords:  []string{"ui", "dark-mode"},
+		Tags:      []string{"preference"},
+	}
+	if event.Operation != "add" {
+		t.Fatalf("operation: %q", event.Operation)
+	}
+	if event.Content != "user prefers dark mode" {
+		t.Fatalf("content: %q", event.Content)
+	}
+	if len(event.Keywords) != 2 {
+		t.Fatalf("expected 2 keywords, got %d", len(event.Keywords))
+	}
+}
+
+func TestIsMemoryTool(t *testing.T) {
+	cases := []struct {
+		name     string
+		expected bool
+	}{
+		{"Add_memory", true},
+		{"Update_memory", true},
+		{"Delete_memory", true},
+		{"bash", false},
+		{"read", false},
+		{"add_memory", false}, // case-sensitive
+	}
+	for _, tc := range cases {
+		if got := isMemoryTool(tc.name); got != tc.expected {
+			t.Errorf("isMemoryTool(%q) = %v, want %v", tc.name, got, tc.expected)
+		}
+	}
+}

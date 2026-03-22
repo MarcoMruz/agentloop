@@ -52,6 +52,19 @@ type RPCEvent struct {
 	Timeout     int      `json:"timeout,omitempty"`
 }
 
+// MemoryToolEvent is constructed when the bridge intercepts a tool_execution_start
+// for Add_memory, Update_memory, or Delete_memory.
+type MemoryToolEvent struct {
+	Operation string   // "add", "update", "delete"
+	NoteID    string   // for update/delete
+	Content   string
+	Keywords  []string
+	Tags      []string
+}
+
+// MemoryToolHandler is called synchronously when a memory tool call is intercepted.
+type MemoryToolHandler func(event MemoryToolEvent)
+
 // ExtensionUIResponse is sent back to pi when a dialog extension_ui_request needs a reply.
 type ExtensionUIResponse struct {
 	Type      string `json:"type"`             // always "extension_ui_response"

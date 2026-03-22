@@ -231,6 +231,14 @@ func (e *Engine) DeleteNote(userID, noteID string) error {
 // recent entries when no keyword overlap is found.
 // Works across all domains: coding, email, calendar, reports, scheduling, etc.
 func (e *Engine) GetContextForUserWithTask(userId string, task string) (string, error) {
+	// MemScheduler: route to appropriate retrieval depth
+	level := Schedule(task)
+
+	// Minimal: just profile + top-3 notes (no history)
+	if level == Minimal {
+		return e.minimalContext(userId, task)
+	}
+
 	// Delegate to MemEvolve pipeline if available
 	if e.pipeline != nil {
 		p := e.pipeline.Get()
@@ -287,7 +295,10 @@ func (e *Engine) GetContextForUserWithTask(userId string, task string) (string, 
 		return candidates[i].score > candidates[j].score
 	})
 
-	const maxRelevant = 8
+	maxRelevant := 8
+	if level == Detailed {
+		maxRelevant = 16
+	}
 	const maxFallback = 5
 
 	var historyLines []string
@@ -414,6 +425,29 @@ func taskCacheKey(task string) string {
 	// Replace characters unsafe for map keys
 	normalized = strings.NewReplacer("/", "-", ":", "-", " ", "_").Replace(normalized)
 	return normalized
+}
+
+func (e *Engine) minimalContext(userId, task string) (string, error) {
+	profile, err := e.profiles.Load(userId)
+	if err != nil {
+		profile = DefaultProfile(userId)
+	}
+	profileText := profile.Render()
+	if e.noteStore == nil {
+		return profileText, nil
+	}
+	kw := ExtractKeywords(task)
+	nts, _ := e.noteStore.SearchByKeywords(userId, kw, 3)
+	if len(nts) == 0 {
+		return profileText, nil
+	}
+	var sb strings.Builder
+	sb.WriteString(profileText)
+	sb.WriteString("\n\n## Memory Notes (top-3)\n")
+	for _, n := range nts {
+		sb.WriteString(fmt.Sprintf("- [%s] %s\n", n.ID, n.Content))
+	}
+	return sb.String(), nil
 }
 
 func estimateTokens(s string) int { return len(s) / 4 }

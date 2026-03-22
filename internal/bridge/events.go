@@ -53,13 +53,17 @@ type RPCEvent struct {
 }
 
 // MemoryToolEvent is constructed when the bridge intercepts a tool_execution_start
-// for Add_memory, Update_memory, or Delete_memory.
+// for Add_memory, Update_memory, Delete_memory, or Retrieve_memory.
 type MemoryToolEvent struct {
-	Operation string   // "add", "update", "delete"
+	Operation string   // "add", "update", "delete", "retrieve"
 	NoteID    string   // for update/delete
 	Content   string
 	Keywords  []string
 	Tags      []string
+	// Retrieve_memory fields
+	Query        string
+	TopK         int
+	RetrievePath string // temp file path — bridge writes results here
 }
 
 // MemoryToolHandler is called synchronously when a memory tool call is intercepted.

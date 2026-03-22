@@ -90,6 +90,40 @@ const factory: ExtensionFactory = (pi) => {
       return { success: true, message: "Memory note deleted." };
     },
   });
+
+  pi.addTool({
+    name: "Retrieve_memory",
+    description:
+      "Search your memory notes for context relevant to the current subtask. Call this when you need to recall specific preferences, project details, or prior decisions related to what you are working on.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Natural language description of what you are looking for",
+        },
+        top_k: {
+          type: "number",
+          description: "Maximum number of notes to return (default 5)",
+        },
+      },
+      required: ["query"],
+    },
+    execute: async (_args: { query: string; top_k?: number }) => {
+      const retrievePath = process.env.AGENTLOOP_RETRIEVE_PATH;
+      if (!retrievePath) {
+        return { notes: [], message: "AGENTLOOP_RETRIEVE_PATH not set" };
+      }
+      try {
+        const fs = await import("fs");
+        const raw = fs.readFileSync(retrievePath, "utf8");
+        const notes = JSON.parse(raw) as Array<{ ID: string; Content: string; Keywords: string[] }>;
+        return { notes, count: notes.length };
+      } catch {
+        return { notes: [], message: "no results" };
+      }
+    },
+  });
 };
 
 export default factory;

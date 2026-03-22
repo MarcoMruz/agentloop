@@ -133,6 +133,9 @@ func (e *Engine) SetPipeline(p *evolve.PipelineHolder) {
 // SetNoteStore wires in an atomic notes store for vector-augmented retrieval.
 func (e *Engine) SetNoteStore(s notes.NoteStore) { e.noteStore = s }
 
+// NoteStore returns the underlying NoteStore, or nil if not set.
+func (e *Engine) NoteStore() notes.NoteStore { return e.noteStore }
+
 // SetLLMClient wires in the background local LLM client for embeddings and deltas.
 func (e *Engine) SetLLMClient(c llm.LLMClient) { e.llmClient = c }
 

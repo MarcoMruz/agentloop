@@ -126,6 +126,7 @@ func TestIsMemoryTool(t *testing.T) {
 		{"Add_memory", true},
 		{"Update_memory", true},
 		{"Delete_memory", true},
+		{"Retrieve_memory", true},
 		{"bash", false},
 		{"read", false},
 		{"add_memory", false}, // case-sensitive
@@ -135,4 +136,17 @@ func TestIsMemoryTool(t *testing.T) {
 			t.Errorf("isMemoryTool(%q) = %v, want %v", tc.name, got, tc.expected)
 		}
 	}
+}
+
+func TestMemoryToolEventRetrieveFields(t *testing.T) {
+	e := MemoryToolEvent{
+		Operation:    "retrieve",
+		Query:        "Go backend",
+		TopK:         5,
+		RetrievePath: "/tmp/test.json",
+	}
+	if e.Operation != "retrieve" { t.Error("Operation") }
+	if e.Query != "Go backend"    { t.Error("Query") }
+	if e.TopK != 5                { t.Error("TopK") }
+	if e.RetrievePath == ""       { t.Error("RetrievePath") }
 }

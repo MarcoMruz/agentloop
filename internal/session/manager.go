@@ -2,8 +2,10 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 
 	"github.com/MarcoMruz/agentloop/internal/agent"
@@ -185,6 +187,34 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 				})
 			},
 			OnMemoryTool: func(ev bridge.MemoryToolEvent) {
+				if ev.Operation == "retrieve" {
+					// Synchronous: file must be written before execute() reads it
+					userID := sess.UserID
+					if ev.RetrievePath == "" {
+						return
+					}
+					if m.memory.NoteStore() == nil {
+						_ = os.WriteFile(ev.RetrievePath, []byte("[]"), 0600)
+						return
+					}
+					topK := ev.TopK
+					if topK <= 0 {
+						topK = 5
+					}
+					kw := memory.ExtractKeywords(ev.Query)
+					results, err := m.memory.NoteStore().SearchByKeywords(userID, kw, topK)
+					if err != nil || len(results) == 0 {
+						_ = os.WriteFile(ev.RetrievePath, []byte("[]"), 0600)
+						return
+					}
+					data, err := json.Marshal(results)
+					if err != nil {
+						_ = os.WriteFile(ev.RetrievePath, []byte("[]"), 0600)
+						return
+					}
+					_ = os.WriteFile(ev.RetrievePath, data, 0600)
+					return
+				}
 				go func() {
 					userID := sess.UserID
 					switch ev.Operation {

@@ -11,13 +11,23 @@ type OrchestratorPatch struct {
 	Content string `json:"content"` // markdown body for {role}-evolved.md
 }
 
+// NoteProposal describes an atomic note to be written into the NoteStore.
+// Each note captures one piece of learned knowledge (Zettelkasten principle).
+type NoteProposal struct {
+	Content     string   `json:"content"`     // Full note body — what was learned
+	Keywords    []string `json:"keywords"`    // Retrieval keywords (exact, lowercase)
+	Tags        []string `json:"tags"`        // Topic tags matching the taxonomy
+	Description string   `json:"description"` // One-line summary ≤120 chars
+}
+
 type EvolutionProposal struct {
-	Reasoning          string                `json:"reasoning"`
-	ConfigChanges      *evolve.PipelineConfig `json:"config_changes"`
-	SkillChanges       []SkillProposal       `json:"skill_changes"`
-	AgentsMDPatch      string                `json:"agents_md_patch"`
-	Summary            string                `json:"summary"`
-	OrchestratorPatches []OrchestratorPatch  `json:"orchestrator_patches"`
+	Reasoning           string                `json:"reasoning"`
+	ConfigChanges       *evolve.PipelineConfig `json:"config_changes"`
+	SkillChanges        []SkillProposal        `json:"skill_changes"`
+	AgentsMDPatch       string                 `json:"agents_md_patch"`
+	NoteProposals       []NoteProposal         `json:"note_proposals"`
+	Summary             string                 `json:"summary"`
+	OrchestratorPatches []OrchestratorPatch    `json:"orchestrator_patches"`
 }
 
 type SkillProposal struct {

@@ -107,6 +107,14 @@ func BuildEvolutionPrompt(p EvolutionPrompt) string {
     {"action": "create|update|delete", "name": "evolved-NAME", "triggers": [...], "description": "...", "content": "..."}
   ],
   "agents_md_patch": "New content for the EVOLVED section (or empty)",
+  "note_proposals": [
+    {
+      "content": "Full atomic note body. One idea only. State what was learned, what the correct pattern is, and when to apply it.",
+      "keywords": ["exact-lowercase-terms", "used-in-retrieval"],
+      "tags": ["topic-from-taxonomy"],
+      "description": "One-line summary of the learned knowledge, ≤120 chars"
+    }
+  ],
   "summary": "One-line summary for git commit",
   "orchestrator_patches": [
     {"role": "planner|worker|judge", "content": "Evolved instructions (abstract, project-agnostic)"}
@@ -122,7 +130,7 @@ func DefaultSystemContext() string {
 
 Your job: analyze poor task outcomes and propose improvements to make future tasks succeed.
 
-You can propose four types of changes:
+You can propose five types of changes:
 1. **Pipeline config changes** — adjust retrieval parameters, compaction strategy, keyword limits, topic extensions
 2. **Skill changes** — create or update skills (behavioral patterns) that will be loaded into future agent prompts
 3. **AGENTS.md changes** — add learned patterns to the agent's core instructions
@@ -130,11 +138,27 @@ You can propose four types of changes:
    - Planner patches: improve task decomposition, specificity of steps, success criteria
    - Worker patches: improve execution patterns, avoid repeated HITL denials
    - Judge patches: improve gap specificity, evidence requirements
+5. **Atomic notes** — write structured knowledge units into the memory store for future retrieval
+   - Each note captures exactly ONE learned fact, pattern, or rule (Zettelkasten principle)
+   - Notes are retrieved when future tasks share keywords or topics — make them specific and precise
+   - A good note answers: "What should the agent know when it encounters this topic again?"
+   - Content should be self-contained — no references like "as seen above" or "in this case"
+   - Keywords must be exact lowercase terms the agent will use in future task descriptions
+   - Tags must come from the topic taxonomy: auth, database, deploy, frontend, backend, test,
+     config, docker, migration, cache, security, build, kubernetes, monitor, logging, debug,
+     refactor, pipeline, email, calendar, meeting, schedule, report, reminder, invoice, budget,
+     travel, contact, document, slack, ticket, review, interview, presentation, deadline,
+     shopping, finance, payment
+   - Description is the retrieval preview (≤120 chars) — make it specific enough to distinguish
+     this note from others on the same topic
 
 Guidelines:
 - Focus on the specific topic cluster of failures. Don't make broad changes for narrow problems.
 - Skills should have precise triggers so they only activate for relevant tasks.
 - AGENTS.md changes should be concise bullet points, not lengthy instructions.
 - Config changes should be conservative — small parameter tweaks, not radical rewrites.
-- All skill names MUST be prefixed with "evolved-".`
+- All skill names MUST be prefixed with "evolved-".
+- Prefer notes over AGENTS.md for domain-specific knowledge — notes are retrieved selectively,
+  AGENTS.md is injected into every prompt regardless of relevance.
+- Write 1–5 notes per evolution. More is not better; precision beats coverage.`
 }

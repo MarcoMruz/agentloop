@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MarcoMruz/agentloop/internal/memory"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
+	"github.com/MarcoMruz/agentloop/internal/memory/notes"
 )
 
 func TestApplierAgentsMDMarkerProtection(t *testing.T) {
@@ -16,7 +18,7 @@ func TestApplierAgentsMDMarkerProtection(t *testing.T) {
 	original := "# Agent Instructions\n\nSome important rules here.\n\n<!-- EVOLVED:START -->\n## Learned Patterns\n\n- Old pattern\n<!-- EVOLVED:END -->\n\nMore content after.\n"
 	os.WriteFile(agentsMD, []byte(original), 0644)
 
-	a := NewApplier(dir, agentsMD, dir)
+	a := NewApplier(dir, agentsMD, dir, nil)
 	err := a.ApplyAgentsMD("- New evolved pattern\n- Another pattern")
 	if err != nil {
 		t.Fatalf("ApplyAgentsMD failed: %v", err)
@@ -46,7 +48,7 @@ func TestApplierAgentsMDCreatesMarkers(t *testing.T) {
 	original := "# Agent Instructions\n\nSome rules.\n"
 	os.WriteFile(agentsMD, []byte(original), 0644)
 
-	a := NewApplier(dir, agentsMD, dir)
+	a := NewApplier(dir, agentsMD, dir, nil)
 	err := a.ApplyAgentsMD("- Learned something")
 	if err != nil {
 		t.Fatalf("ApplyAgentsMD failed: %v", err)
@@ -68,7 +70,7 @@ func TestApplierAgentsMDCreatesMarkers(t *testing.T) {
 
 func TestApplierSkillNamespacing(t *testing.T) {
 	dir := t.TempDir()
-	a := NewApplier(dir, "", dir)
+	a := NewApplier(dir, "", dir, nil)
 
 	err := a.ApplySkill(SkillProposal{
 		Action:      "create",
@@ -98,7 +100,7 @@ func TestApplierSnapshotCreated(t *testing.T) {
 	configPath := filepath.Join(evolvedDir, "pipeline-config.yaml")
 	os.WriteFile(configPath, []byte("version: 1\n"), 0644)
 
-	a := NewApplier(dir, "", dir)
+	a := NewApplier(dir, "", dir, nil)
 	ts, err := a.Snapshot()
 	if err != nil {
 		t.Fatalf("Snapshot failed: %v", err)
@@ -115,7 +117,7 @@ func TestApplierConfigWrite(t *testing.T) {
 	evolvedDir := filepath.Join(dir, "memory", "evolved")
 	os.MkdirAll(evolvedDir, 0755)
 
-	a := NewApplier(dir, "", dir)
+	a := NewApplier(dir, "", dir, nil)
 	cfg := evolve.DefaultPipelineConfig()
 	cfg.Version = 5
 	cfg.Retriever.MaxResults = 15
@@ -136,7 +138,7 @@ func TestApplierConfigWrite(t *testing.T) {
 
 func TestApplierGitNotInstalled(t *testing.T) {
 	dir := t.TempDir()
-	a := NewApplier(dir, "", dir)
+	a := NewApplier(dir, "", dir, nil)
 	a.gitCommit("test commit that should be skipped or init")
 }
 
@@ -154,7 +156,7 @@ func TestProposalParsingInvalid(t *testing.T) {
 
 func TestApplierOrchestratorPatchDefaultAgent(t *testing.T) {
 	dir := t.TempDir()
-	a := NewApplier(dir, "", dir)
+	a := NewApplier(dir, "", dir, nil)
 
 	patch := OrchestratorPatch{
 		Role:    "worker",
@@ -183,7 +185,7 @@ func TestApplierOrchestratorPatchDefaultAgent(t *testing.T) {
 func TestApplierOrchestratorPatchProjectAgent(t *testing.T) {
 	dir := t.TempDir()
 	customDir := filepath.Join(dir, "custom-agents")
-	a := NewApplier(dir, "", dir)
+	a := NewApplier(dir, "", dir, nil)
 
 	patch := OrchestratorPatch{
 		Role:    "planner",
@@ -211,7 +213,7 @@ func TestApplierOrchestratorPatchProjectAgent(t *testing.T) {
 
 func TestApplierOrchestratorPatchInvalidRole(t *testing.T) {
 	dir := t.TempDir()
-	a := NewApplier(dir, "", dir)
+	a := NewApplier(dir, "", dir, nil)
 
 	patch := OrchestratorPatch{
 		Role:    "hacker",
@@ -225,7 +227,7 @@ func TestApplierOrchestratorPatchInvalidRole(t *testing.T) {
 
 func TestProposalParsingValid(t *testing.T) {
 	input := `Here is my proposal:
-{"reasoning":"auth failures","config_changes":{"version":2},"skill_changes":[],"agents_md_patch":"","summary":"tune auth retrieval"}
+{"reasoning":"auth failures","config_changes":{"version":2},"skill_changes":[],"agents_md_patch":"","note_proposals":[],"summary":"tune auth retrieval"}
 Done.`
 	p, err := ParseProposal(input)
 	if err != nil {
@@ -233,5 +235,42 @@ Done.`
 	}
 	if p.Summary != "tune auth retrieval" {
 		t.Fatalf("unexpected summary: %s", p.Summary)
+	}
+}
+
+func TestApplierNoteProposals(t *testing.T) {
+	dir := t.TempDir()
+	store, err := notes.NewSQLiteNoteStore(filepath.Join(dir, "notes"), 0)
+	if err != nil {
+		t.Fatalf("NewSQLiteNoteStore: %v", err)
+	}
+	defer store.Close()
+
+	engine := memory.NewEngine(dir, 4000, "rolling", 30)
+	engine.SetNoteStore(store)
+
+	a := NewApplier(dir, "", dir, engine)
+	proposals := []NoteProposal{
+		{
+			Content:     "When OAuth2 token refresh fails, retry with exponential backoff starting at 1s. Log each failure with the HTTP status code.",
+			Keywords:    []string{"oauth2", "token", "refresh", "backoff"},
+			Tags:        []string{"auth", "security"},
+			Description: "OAuth2 token refresh: retry with exponential backoff, log HTTP status",
+		},
+	}
+
+	if err := a.ApplyNoteProposals(proposals, "test-user"); err != nil {
+		t.Fatalf("ApplyNoteProposals failed: %v", err)
+	}
+
+	results, err := store.SearchByKeywords("test-user", []string{"oauth2", "token"}, 5)
+	if err != nil {
+		t.Fatalf("SearchByKeywords failed: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected note to be retrievable by keyword")
+	}
+	if !strings.Contains(results[0].Content, "exponential backoff") {
+		t.Fatalf("unexpected note content: %s", results[0].Content)
 	}
 }

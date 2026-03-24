@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MarcoMruz/agentloop/internal/memory"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/version"
+	"github.com/MarcoMruz/agentloop/internal/memory/notes"
 )
 
 const (
@@ -23,17 +25,20 @@ type Applier struct {
 	vaultPath  string
 	agentsMD   string
 	skillsPath string
+	engine     *memory.Engine // nil = note proposals skipped
 }
 
-func NewApplier(vaultPath, agentsMDPath, skillsPath string) *Applier {
+func NewApplier(vaultPath, agentsMDPath, skillsPath string, engine *memory.Engine) *Applier {
 	return &Applier{
 		vaultPath:  vaultPath,
 		agentsMD:   agentsMDPath,
 		skillsPath: skillsPath,
+		engine:     engine,
 	}
 }
 
-func (a *Applier) Apply(proposal *EvolutionProposal) error {
+// Apply applies a full evolution proposal for the given user.
+func (a *Applier) Apply(proposal *EvolutionProposal, userID string) error {
 	_, err := a.Snapshot()
 	if err != nil {
 		slog.Warn("snapshot failed, continuing", "error", err)
@@ -57,6 +62,12 @@ func (a *Applier) Apply(proposal *EvolutionProposal) error {
 		}
 	}
 
+	if len(proposal.NoteProposals) > 0 {
+		if err := a.ApplyNoteProposals(proposal.NoteProposals, userID); err != nil {
+			slog.Warn("note proposals apply failed", "error", err)
+		}
+	}
+
 	for _, op := range proposal.OrchestratorPatches {
 		if err := a.ApplyOrchestratorPatch(op); err != nil {
 			slog.Warn("orchestrator patch failed", "role", op.Role, "error", err)
@@ -66,6 +77,35 @@ func (a *Applier) Apply(proposal *EvolutionProposal) error {
 	a.gitCommit(proposal.Summary)
 	a.logEvolution(proposal)
 
+	return nil
+}
+
+// ApplyNoteProposals stores each proposed atomic note via Engine.AddNote,
+// which triggers bidirectional auto-linking against existing notes.
+// Skipped silently when engine is nil or has no note store configured.
+func (a *Applier) ApplyNoteProposals(proposals []NoteProposal, userID string) error {
+	if a.engine == nil {
+		slog.Debug("engine not configured, skipping note proposals")
+		return nil
+	}
+	for _, p := range proposals {
+		desc := p.Description
+		if len(desc) > 120 {
+			desc = desc[:117] + "..."
+		}
+		id, err := a.engine.AddNote(notes.AtomicNote{
+			UserID:      userID,
+			Content:     p.Content,
+			Keywords:    p.Keywords,
+			Tags:        p.Tags,
+			Description: desc,
+		})
+		if err != nil {
+			slog.Warn("failed to store evolved note", "description", desc, "error", err)
+			continue
+		}
+		slog.Info("evolved note stored", "id", id, "description", desc)
+	}
 	return nil
 }
 

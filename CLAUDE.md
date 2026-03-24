@@ -514,7 +514,12 @@ All memory, caching, compaction, and context management lives here. No client ev
 
 **`ProfileStore`** — per-user YAML profiles in `vault/memory/users/`. Tracks communication style, preferences, frequent projects, fact sheet, recent topics.
 
-**`ConversationStore`** — per-user, per-day markdown conversation logs in `vault/memory/contexts/`.
+**`ConversationStore`** — per-user, per-day markdown conversation logs in `vault/memory/contexts/`. Legacy store; superseded by `SQLiteNoteStore` in the MemEvolve pipeline.
+
+**`internal/memory/notes/`** — Zettelkasten atomic note store.
+- `AtomicNote` — one idea per note: `{ID, UserID, Content, Keywords, Tags, Description, Embedding, Connections, CreatedAt, UpdatedAt}`. `Tags` maps to topic taxonomy. `Connections` holds IDs of related notes.
+- `SQLiteNoteStore` (`sqlite.go`) — **production store**. Per-user SQLite databases at `vault/memory/notes/{userID}.db`. Keyword search via `json_each()`. Vector search via `sqlite-vec` `vec0` virtual table when `embeddingDim > 0`. Always use `*SQLiteNoteStore` directly in production code.
+- `NoteStore` interface (`store.go`) — **test-only**. `InMemoryNoteStore` implements it for unit tests. Never depend on `NoteStore` in production code.
 
 **`Compactor`** — 3 strategies (rolling, facts, topics), all heuristic-based, no LLM calls.
 
@@ -538,10 +543,12 @@ Adds a self-improving memory layer that observes task outcomes and autonomously 
 
 **`PipelineConfig`** (`config.go`) — YAML file at `vault/memory/evolved/pipeline-config.yaml`. Controls encoder strategy, retriever scoring weights, manager compaction, storer format. Hot-reloaded by the MetaAgent after each evolution.
 
-**`baseline/`** — baseline implementations that wrap the existing `Engine` behavior, ensuring zero behavior change on initial deploy:
+**`RetrievalQuery`** — `QueryEmbedding []float32` field enables vector search. When nil, only keyword search runs. Caller is responsible for computing the embedding before calling `Retrieve()`.
+
+**`baseline/`** — baseline implementations backed by `SQLiteNoteStore`:
 - `BaselineEncoder` — calls `ExtractKeywords`/`ExtractTopics` from `index.go`
-- `BaselineStorer` — delegates to `ProfileStore` + `ConversationStore`
-- `BaselineRetriever` — Jaccard keyword matching + topic bonus + recency weight + edges positioning
+- `BaselineStorer` — writes via `Engine.AddNote()` (triggers auto-linking); reads via `Engine.NoteStore().ListByUser()`. Constructor: `NewBaselineStorer(profiles, *memory.Engine)`.
+- `BaselineRetriever` — dual-mode: vector search (`SearchByVector`) when `QueryEmbedding` is set, keyword search (`SearchByKeywords`) always. Both result sets are merged, deduplicated by ID, Jaccard re-ranked, and edge-positioned. Constructor: `NewBaselineRetriever(profiles, *SQLiteNoteStore, config)`.
 - `BaselineManager` — delegates to `Compactor`
 
 **`metrics/`** — task outcome collection and scoring:
@@ -551,10 +558,11 @@ Adds a self-improving memory layer that observes task outcomes and autonomously 
 - `ClusterOutcomes()` — groups poor outcomes by shared topics (connected-components); falls back to keywords. Ensures the MetaAgent sees coherent context.
 
 **`meta/`** — the meta-evolution agent:
-- `MetaAgent` — serialized via mutex (one evolution at a time). `Evolve()` loads recent poor outcomes, clusters them, builds a read-only pi session with `EvolutionPrompt`, parses `EvolutionProposal` from pi's output, then calls `Applier`.
-- `Applier` — validates and applies proposals: writes `pipeline-config.yaml`, creates/updates skill files (`evolved-` prefix), patches the `<!-- EVOLVED:START -->…<!-- EVOLVED:END -->` marker section in `AGENTS.md`. Calls `Snapshotter.Take()` before applying, then `gitCommit()` after.
-- `EvolutionProposal` — `{Reasoning, ConfigChanges *PipelineConfig, SkillChanges []SkillProposal, AgentsMDPatch, Summary}`
-- `ParseProposal()` — extracts JSON from pi's `<evolved>…</evolved>` output block
+- `MetaAgent` — serialized via mutex (one evolution at a time). Constructor: `NewMetaAgent(vaultPath, agentsMDPath, skillsPath, piCfg, secCfg, evoCfg, pipeline, *memory.Engine)`. `Evolve()` loads recent poor outcomes, clusters them, builds a read-only pi session with `EvolutionPrompt`, parses `EvolutionProposal` from pi's output, then calls `Applier.Apply(proposal, outcome.UserID)`.
+- `Applier` — constructor: `NewApplier(vaultPath, agentsMDPath, skillsPath, *memory.Engine)`. `Apply(proposal, userID)` applies all proposal fields in order: config → skills → AGENTS.md → notes → orchestrator patches → git commit. `ApplyNoteProposals(proposals, userID)` calls `Engine.AddNote()` for each `NoteProposal`, which triggers bidirectional auto-linking; skipped silently when engine is nil.
+- `EvolutionProposal` — `{Reasoning, ConfigChanges, SkillChanges, AgentsMDPatch, NoteProposals []NoteProposal, OrchestratorPatches, Summary}`
+- `NoteProposal` — `{Content, Keywords []string, Tags []string, Description}`. One idea per note. Tags must match the topic taxonomy. Description ≤120 chars.
+- `ParseProposal()` — extracts the first balanced JSON object from pi's output
 
 **`version/`** — audit trail:
 - `Snapshotter` — copies `pipeline-config.yaml`, AGENTS.md, and skills to `vault/memory/evolved/snapshots/{timestamp}/` before each evolution
@@ -914,3 +922,7 @@ if errors.IsUserAbort(err) { /* clean exit */ }
 19. **Evolution is serialized, not concurrent** — `MetaAgent` holds a mutex for the duration of `Evolve()`. The `Collector` fires triggers as goroutines (`go trigger(outcome)`), so a concurrent trigger will block at the mutex and run after the current evolution finishes. In practice, the `Collector`'s rate limiter (cooldown + daily cap) prevents a burst of queued goroutines. Rate limit counters are in-memory and reset on server restart.
 20. **`PipelineHolder.Reload()` is atomic** — it swaps the `atomic.Pointer[Pipeline]` in a single store. In-flight sessions that already called `Get()` continue on the old pipeline for their duration; new `Get()` calls see the new pipeline immediately.
 21. **`ExtractKeywords` and `ExtractTopics` are exported from `memory/index.go`** — these were previously unexported. Do not move them; baseline implementations import them by package path.
+22. **`NoteStore` interface is test-only** — never accept `NoteStore` as a parameter in production code. Use `*notes.SQLiteNoteStore` directly. `InMemoryNoteStore` exists only for unit tests.
+23. **Vector search requires a pre-computed embedding** — `BaselineRetriever` calls `SearchByVector` only when `RetrievalQuery.QueryEmbedding` is non-nil. The retriever does not call any embedding API itself. If `QueryEmbedding` is nil, only keyword search runs; this is correct and expected behavior when no embedding provider is wired.
+24. **`Applier.Apply()` requires `userID`** — `NoteProposals` are stored per-user via `Engine.AddNote()`. Passing an empty string silently produces notes with no owner. Always pass `outcome.UserID`. Passing a nil engine silently skips all note proposals.
+25. **MemEvolve only creates notes, never updates or deletes them** — `NoteProposal` has no `action` field. Notes written by evolution are immutable knowledge artifacts; the agent accumulates them across evolutions.

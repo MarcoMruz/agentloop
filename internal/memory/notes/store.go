@@ -26,7 +26,9 @@ type AtomicNote struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// NoteStore persists and retrieves atomic notes.
+// NoteStore defines the note storage interface.
+// IMPORTANT: For test purposes only. Production code must use *SQLiteNoteStore directly.
+// InMemoryNoteStore (below) implements this interface for unit tests.
 type NoteStore interface {
 	Add(note AtomicNote) (id string, err error)
 	Get(id string) (*AtomicNote, error)

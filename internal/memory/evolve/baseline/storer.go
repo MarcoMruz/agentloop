@@ -5,38 +5,47 @@ import (
 
 	"github.com/MarcoMruz/agentloop/internal/memory"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
+	"github.com/MarcoMruz/agentloop/internal/memory/notes"
 )
 
-// BaselineStorer wraps ProfileStore and ConversationStore into the
-// evolve.Storer interface, preserving the existing storage format.
+// BaselineStorer wraps ProfileStore and Engine into the evolve.Storer interface.
+// Writes go through Engine.AddNote() to trigger bidirectional auto-linking.
 type BaselineStorer struct {
-	profiles      *memory.ProfileStore
-	conversations *memory.ConversationStore
+	profiles *memory.ProfileStore
+	engine   *memory.Engine
 }
 
-// NewBaselineStorer creates a storer backed by the legacy stores.
-func NewBaselineStorer(profiles *memory.ProfileStore, conversations *memory.ConversationStore) *BaselineStorer {
-	return &BaselineStorer{profiles: profiles, conversations: conversations}
+// NewBaselineStorer creates a storer that routes note writes through Engine.AddNote.
+func NewBaselineStorer(profiles *memory.ProfileStore, engine *memory.Engine) *BaselineStorer {
+	return &BaselineStorer{profiles: profiles, engine: engine}
 }
 
 // Store persists memory units. Profile-type units are skipped (profile updates
-// happen as a side-effect of Encode). Conversation units are appended via
-// ConversationStore.Append.
+// happen as a side-effect of Encode). Conversation units are stored via
+// Engine.AddNote so bidirectional auto-linking runs on every write.
 func (s *BaselineStorer) Store(ctx context.Context, units []evolve.MemoryUnit) error {
 	for _, u := range units {
 		if u.Metadata["type"] == "profile" {
 			continue
 		}
-		contextID := u.Metadata["contextID"]
-		if err := s.conversations.Append(u.Metadata["userId"], u.Role, u.Content, contextID); err != nil {
+		desc := u.Content
+		if len(desc) > 120 {
+			desc = desc[:117] + "..."
+		}
+		if _, err := s.engine.AddNote(notes.AtomicNote{
+			UserID:      u.Metadata["userId"],
+			Content:     u.Content,
+			Keywords:    u.Keywords,
+			Tags:        u.Topics,
+			Description: desc,
+		}); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// Load retrieves memory units for a user. It assembles units from profiles
-// and/or conversation index entries depending on the filter.
+// Load retrieves memory units for a user from the profile and NoteStore.
 func (s *BaselineStorer) Load(ctx context.Context, userId string, filter evolve.StoreFilter) ([]evolve.MemoryUnit, error) {
 	maxItems := filter.MaxItems
 	if maxItems <= 0 {
@@ -59,27 +68,27 @@ func (s *BaselineStorer) Load(ctx context.Context, userId string, filter evolve.
 	}
 
 	if filter.Type == "conversation" || filter.Type == "all" || filter.Type == "" {
-		var entries []memory.IndexEntry
-		var err error
-
-		if filter.ContextID != "" {
-			entries, err = s.conversations.GetRecentIndexedByContext(userId, filter.ContextID, maxItems)
-		} else {
-			entries, err = s.conversations.GetRecentIndexed(userId, maxItems)
+		ns := s.engine.NoteStore()
+		if ns == nil {
+			return units, nil
 		}
+		noteList, err := ns.ListByUser(userId)
 		if err != nil {
 			return units, err
 		}
-
-		for _, e := range entries {
+		for i, n := range noteList {
+			if i >= maxItems {
+				break
+			}
 			units = append(units, evolve.MemoryUnit{
-				Role:     e.Role,
-				Content:  e.Summary,
-				Keywords: e.Keywords,
-				Topics:   e.Topics,
+				ID:        n.ID,
+				Timestamp: n.CreatedAt,
+				Role:      "user",
+				Content:   n.Content,
+				Keywords:  n.Keywords,
+				Topics:    n.Tags,
 				Metadata: map[string]string{
-					"type":      "conversation",
-					"contextID": e.ConversationContextID,
+					"type": "conversation",
 				},
 			})
 		}

@@ -230,23 +230,37 @@ func (s *SQLiteNoteStore) Delete(id string) error {
 }
 
 // SearchByKeywords returns up to topK notes for userID that match any keyword.
+// Matching is pushed to SQLite via json_each() so only matching rows are returned.
 func (s *SQLiteNoteStore) SearchByKeywords(userID string, keywords []string, topK int) ([]AtomicNote, error) {
+	if len(keywords) == 0 {
+		return nil, nil
+	}
 	db, err := s.db(userID)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`
-		SELECT id, user_id, content, keywords, tags, description, connections, created_at, updated_at
-		FROM notes WHERE user_id=? ORDER BY created_at DESC`, userID)
+
+	placeholders := strings.Repeat("?,", len(keywords))
+	placeholders = placeholders[:len(placeholders)-1]
+
+	args := make([]any, 0, 1+len(keywords)+1)
+	args = append(args, userID)
+	for _, k := range keywords {
+		args = append(args, strings.ToLower(k))
+	}
+	args = append(args, topK)
+
+	rows, err := db.Query(fmt.Sprintf(`
+		SELECT DISTINCT n.id, n.user_id, n.content, n.keywords, n.tags, n.description, n.connections, n.created_at, n.updated_at
+		FROM notes n, json_each(n.keywords) ke
+		WHERE n.user_id = ?
+		  AND lower(ke.value) IN (%s)
+		ORDER BY n.created_at DESC
+		LIMIT ?`, placeholders), args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
-	kw := make(map[string]bool, len(keywords))
-	for _, k := range keywords {
-		kw[strings.ToLower(k)] = true
-	}
 
 	var results []AtomicNote
 	for rows.Next() {
@@ -260,16 +274,7 @@ func (s *SQLiteNoteStore) SearchByKeywords(userID string, keywords []string, top
 		json.Unmarshal([]byte(connsJSON), &n.Connections)
 		n.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 		n.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
-
-		for _, k := range n.Keywords {
-			if kw[strings.ToLower(k)] {
-				results = append(results, n)
-				break
-			}
-		}
-		if len(results) >= topK {
-			break
-		}
+		results = append(results, n)
 	}
 	return results, nil
 }

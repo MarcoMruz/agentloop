@@ -46,6 +46,10 @@ func RunTextSession(
 		return "", fmt.Errorf("prompt pi: %w", err)
 	}
 
-	<-b.Done()
+	select {
+	case <-b.Done():
+	case <-ctx.Done():
+		return response.String(), ctx.Err()
+	}
 	return response.String(), nil
 }

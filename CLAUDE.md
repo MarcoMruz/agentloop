@@ -786,10 +786,7 @@ Extensions are TypeScript files in `extensions/` that pi loads via the `-e` flag
 | `docker-guard.ts` | Permission gate | Validates docker subcommands + volume mounts |
 | `prompt-injection-guard.ts` | Permission gate | Detects prompt injection attempts from risky sources |
 | `memory-tools.ts` | Custom tools | Exposes `Add_memory`, `Update_memory`, `Delete_memory`, `Retrieve_memory` tools to pi |
-<<<<<<< HEAD
-=======
 | `skill-tools.ts` | Custom tools | Exposes `Find_skill` tool — LLM-driven skill selection at runtime |
->>>>>>> 236e9d1 (docs(claude): update for LLM-driven skill selection — pirun, SkillAgent, Find_skill tool)
 
 ### Extension Environment Variables
 
@@ -805,12 +802,8 @@ Extensions are TypeScript files in `extensions/` that pi loads via the `-e` flag
 | `AGENTLOOP_MAX_CONTENT_LENGTH` | **prompt-injection-guard.ts** | **Number** | **50000** |
 | `AGENTLOOP_APPROVAL_TIER` | **prompt-injection-guard.ts** | **"owner"/"admin"/"auto-deny"** | **"owner"** |
 | `AGENTLOOP_SANITIZE_MEMORY` | **prompt-injection-guard.ts** | **"true"/"false"** | **true** |
-<<<<<<< HEAD
-| `AGENTLOOP_RETRIEVE_PATH` | memory-tools.ts | Absolute path to temp file | Set by server on session start |
-=======
 | `AGENTLOOP_RETRIEVE_PATH` | memory-tools.ts | Absolute path to temp file | Set by server per session |
 | `AGENTLOOP_SKILL_LOAD_PATH` | skill-tools.ts | Absolute path to temp file | Set by server per session |
->>>>>>> 236e9d1 (docs(claude): update for LLM-driven skill selection — pirun, SkillAgent, Find_skill tool)
 
 ### Adding a New Extension
 

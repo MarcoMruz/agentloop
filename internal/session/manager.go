@@ -56,6 +56,7 @@ type Manager struct {
 	vault    *vault.Vault
 	memory   *memory.Engine
 	skills   *skills.Registry
+	skillAgent *skills.SkillAgent
 	collector *metrics.Collector
 	pipeline  *evolve.PipelineHolder
 	metaAgent *meta.MetaAgent
@@ -92,6 +93,11 @@ func (m *Manager) SetPipeline(p *evolve.PipelineHolder) {
 // SetMetaAgent sets the MemEvolve meta-evolution agent.
 func (m *Manager) SetMetaAgent(ma *meta.MetaAgent) {
 	m.metaAgent = ma
+}
+
+// SetSkillAgent sets the SkillAgent for LLM-driven skill selection.
+func (m *Manager) SetSkillAgent(sa *skills.SkillAgent) {
+	m.skillAgent = sa
 }
 
 func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session, error) {
@@ -254,6 +260,34 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 					}
 				}()
 			},
+			OnSkillTool: func(ev bridge.SkillToolEvent) {
+				if m.skillAgent == nil {
+					writeSkillError(ev.SkillLoadPath, "skill agent not configured")
+					return
+				}
+				query, _ := ev.Params["query"].(string)
+				if query == "" {
+					writeSkillError(ev.SkillLoadPath, "missing query param")
+					return
+				}
+				catalog := m.skills.Catalog()
+				name, err := m.skillAgent.Find(ctx, query, catalog)
+				if err != nil || name == "" {
+					writeSkillError(ev.SkillLoadPath, "no matching skill found")
+					return
+				}
+				skill, err := m.skills.Get(name)
+				if err != nil {
+					writeSkillError(ev.SkillLoadPath, "skill not found: "+name)
+					return
+				}
+				data, err := json.Marshal(skill)
+				if err != nil {
+					writeSkillError(ev.SkillLoadPath, "failed to marshal skill")
+					return
+				}
+				_ = os.WriteFile(ev.SkillLoadPath, data, 0600)
+			},
 		})
 
 		// Convert OrchestratorResult to RunResult for vault persistence
@@ -387,4 +421,9 @@ func (m *Manager) evictOldestLRU() string {
 func truncate(s string, n int) string {
 	if len(s) <= n { return s }
 	return s[:n] + "...[truncated]"
+}
+
+func writeSkillError(path string, msg string) {
+	data, _ := json.Marshal(map[string]string{"error": msg})
+	_ = os.WriteFile(path, data, 0600)
 }

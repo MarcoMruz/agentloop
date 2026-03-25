@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/MarcoMruz/agentloop/internal/config"
+	"github.com/google/uuid"
 )
 
 // EventHandler is called for each event from pi.
@@ -25,17 +26,19 @@ type HITLHandler func(event RPCEvent) (bool, error)
 
 // PiBridge manages the pi subprocess and RPC communication.
 type PiBridge struct {
-	cfg     config.PiConfig
-	secCfg  config.SecurityConfig
-	hitlCfg config.HITLConfig
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	stdout  io.ReadCloser
-	stderr  io.ReadCloser
-	mu      sync.Mutex
-	onEvent EventHandler
-	onHITL  HITLHandler
-	done    chan struct{}
+	cfg          config.PiConfig
+	secCfg       config.SecurityConfig
+	hitlCfg      config.HITLConfig
+	cmd          *exec.Cmd
+	stdin        io.WriteCloser
+	stdout       io.ReadCloser
+	stderr       io.ReadCloser
+	mu           sync.Mutex
+	onEvent      EventHandler
+	onHITL       HITLHandler
+	onMemoryTool MemoryToolHandler
+	done         chan struct{}
+	retrievePath string // per-session temp file for Retrieve_memory results
 }
 
 // New creates a PiBridge but does not start it. Call Start() separately.
@@ -54,8 +57,14 @@ func (b *PiBridge) SetEventHandler(h EventHandler) { b.onEvent = h }
 // SetHITLHandler registers the callback for HITL approval requests.
 func (b *PiBridge) SetHITLHandler(h HITLHandler) { b.onHITL = h }
 
+// SetMemoryToolHandler registers the callback for memory tool interception.
+func (b *PiBridge) SetMemoryToolHandler(h MemoryToolHandler) { b.onMemoryTool = h }
+
 // Start launches the pi subprocess in RPC mode.
 func (b *PiBridge) Start(ctx context.Context, workDir string) error {
+	// Generate per-session temp file path for Retrieve_memory IPC
+	b.retrievePath = filepath.Join(os.TempDir(), fmt.Sprintf("agentloop-retrieve-%s.json", uuid.New().String()[:8]))
+
 	binary := b.cfg.Binary
 	if binary == "" {
 		binary = "pi"
@@ -94,7 +103,9 @@ func (b *PiBridge) Start(ctx context.Context, workDir string) error {
 	b.cmd.Dir = workDir
 
 	// SECURITY: Build sanitized environment for pi subprocess
-	b.cmd.Env = buildSafeEnv(b.secCfg.BlockedEnvPrefixes, b.secCfg.Injection, b.hitlCfg)
+	env := buildSafeEnv(b.secCfg.BlockedEnvPrefixes, b.secCfg.Injection, b.hitlCfg)
+	env = append(env, "AGENTLOOP_RETRIEVE_PATH="+b.retrievePath)
+	b.cmd.Env = env
 
 	var err error
 	b.stdin, err = b.cmd.StdinPipe()
@@ -167,6 +178,9 @@ func (b *PiBridge) Stop() error {
 	if b.stdin != nil {
 		b.stdin.Close()
 	}
+	if b.retrievePath != "" {
+		_ = os.Remove(b.retrievePath)
+	}
 	if b.cmd != nil && b.cmd.Process != nil {
 		return b.cmd.Process.Kill()
 	}
@@ -226,6 +240,81 @@ func (b *PiBridge) readEvents() {
 				slog.Warn("event handler error", "type", event.Type, "error", err)
 			}
 		}
+
+		// Memory tool interception: fire-and-forget side effect for Add/Update/Delete_memory
+		// and synchronous file write for Retrieve_memory (must complete before execute() reads it)
+		if event.Type == "tool_execution_start" && isMemoryTool(event.ToolName) && b.onMemoryTool != nil {
+			b.onMemoryTool(memoryToolEventFromArgs(event.ToolName, event.Args, b.retrievePath))
+		}
+	}
+}
+
+func isMemoryTool(name string) bool {
+	switch name {
+	case "Add_memory", "Update_memory", "Delete_memory", "Retrieve_memory":
+		return true
+	}
+	return false
+}
+
+func memoryToolOperation(name string) string {
+	switch name {
+	case "Add_memory":
+		return "add"
+	case "Update_memory":
+		return "update"
+	case "Delete_memory":
+		return "delete"
+	case "Retrieve_memory":
+		return "retrieve"
+	}
+	return ""
+}
+
+func memoryToolEventFromArgs(toolName string, args map[string]any, retrievePath string) MemoryToolEvent {
+	strVal := func(key string) string {
+		if v, ok := args[key]; ok {
+			if s, ok := v.(string); ok {
+				return s
+			}
+		}
+		return ""
+	}
+	intVal := func(key string) int {
+		if v, ok := args[key]; ok {
+			switch n := v.(type) {
+			case float64:
+				return int(n)
+			case int:
+				return n
+			}
+		}
+		return 5
+	}
+	strSlice := func(key string) []string {
+		if v, ok := args[key]; ok {
+			if arr, ok := v.([]any); ok {
+				out := make([]string, 0, len(arr))
+				for _, x := range arr {
+					if s, ok := x.(string); ok {
+						out = append(out, s)
+					}
+				}
+				return out
+			}
+		}
+		return nil
+	}
+	op := memoryToolOperation(toolName)
+	return MemoryToolEvent{
+		Operation:    op,
+		NoteID:       strVal("id"),
+		Content:      strVal("content"),
+		Keywords:     strSlice("keywords"),
+		Tags:         strSlice("tags"),
+		Query:        strVal("query"),
+		TopK:         intVal("top_k"),
+		RetrievePath: retrievePath,
 	}
 }
 

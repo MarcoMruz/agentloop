@@ -1,6 +1,9 @@
 package memory
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 type CompactionResult struct {
 	Text           string
@@ -129,4 +132,40 @@ func splitTurns(history string) []string {
 func last(ss []string, n int) []string {
 	if len(ss) <= n { return ss }
 	return ss[len(ss)-n:]
+}
+
+// deltaExtractor is the minimal LLM interface needed for delta extraction.
+// Defined here to avoid importing memory/llm from the memory package.
+type deltaExtractor interface {
+	Complete(prompt string) (string, error)
+}
+
+// deltaPrompt instructs the LLM to extract one insight per call.
+const deltaPrompt = `You are a memory extraction assistant. Extract only new, specific user preferences or facts from this conversation.
+
+Rules:
+- Output exactly one line starting with "DELTA: " followed by the insight
+- Only extract concrete, reusable facts (e.g. "user prefers Go over Python for backends")
+- Skip generic or transient statements
+- If nothing noteworthy, output nothing
+
+Conversation:
+%s`
+
+// extractDelta calls the LLM to extract a single delta fact.
+// Returns empty string when no delta found, client is nil, or response has no DELTA: prefix.
+func extractDelta(client deltaExtractor, conversation string) (string, error) {
+	if client == nil {
+		return "", nil
+	}
+	prompt := fmt.Sprintf(deltaPrompt, conversation)
+	response, err := client.Complete(prompt)
+	if err != nil {
+		return "", fmt.Errorf("extractDelta: %w", err)
+	}
+	const prefix = "DELTA: "
+	if strings.HasPrefix(response, prefix) {
+		return strings.TrimPrefix(response, prefix), nil
+	}
+	return "", nil
 }

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
+	"github.com/MarcoMruz/agentloop/internal/memory/llm"
+	"github.com/MarcoMruz/agentloop/internal/memory/notes"
 )
 
 type Engine struct {
@@ -17,6 +19,8 @@ type Engine struct {
 	compactor     *Compactor
 	maxCtxTokens  int
 	pipeline      *evolve.PipelineHolder
+	noteStore     notes.NoteStore
+	llmClient     llm.LLMClient
 }
 
 func NewEngine(vaultPath string, maxContextTokens int, compactionStrategy string, retainDays int) *Engine {
@@ -93,12 +97,47 @@ func (e *Engine) RecordInteraction(userId string, userMsg string, agentReply str
 
 	// Update profile with learned patterns (heuristic, no LLM)
 	e.profiles.UpdateFromInteraction(userId, userMsg, toolsUsed)
+
+	// ACE delta extraction: asynchronously distill conversation into one atomic note.
+	if e.llmClient != nil && e.noteStore != nil {
+		go func() {
+			conversation := fmt.Sprintf("user: %s\nassistant: %s", userMsg, agentReply)
+			delta, err := extractDelta(e.llmClient, conversation)
+			if err != nil || delta == "" {
+				return
+			}
+			keywords := ExtractKeywords(delta)
+			topics := ExtractTopics(delta)
+			note := notes.AtomicNote{
+				UserID:      userId,
+				Content:     delta,
+				Keywords:    keywords,
+				Tags:        topics,
+				Description: "auto-extracted preference delta",
+			}
+			if emb, err := e.llmClient.Embed(delta); err == nil && emb != nil {
+				note.Embedding = emb
+			}
+			if _, err := e.noteStore.Add(note); err != nil {
+				slog.Debug("failed to save delta note", "err", err)
+			}
+		}()
+	}
 }
 
 // SetPipeline sets the MemEvolve pipeline for delegation.
 func (e *Engine) SetPipeline(p *evolve.PipelineHolder) {
 	e.pipeline = p
 }
+
+// SetNoteStore wires in an atomic notes store for vector-augmented retrieval.
+func (e *Engine) SetNoteStore(s notes.NoteStore) { e.noteStore = s }
+
+// NoteStore returns the underlying NoteStore, or nil if not set.
+func (e *Engine) NoteStore() notes.NoteStore { return e.noteStore }
+
+// SetLLMClient wires in the background local LLM client for embeddings and deltas.
+func (e *Engine) SetLLMClient(c llm.LLMClient) { e.llmClient = c }
 
 // UpdateUserFact allows explicit profile updates (e.g. "remember I prefer TypeScript").
 func (e *Engine) UpdateUserFact(userId string, key string, value string) error {
@@ -112,12 +151,97 @@ func (e *Engine) ForgetUserFact(userId string, key string) error {
 	return e.profiles.DeleteFact(userId, key)
 }
 
+// linkNote adds a bidirectional connection between newID and relatedID.
+// No-ops if either note cannot be loaded or the connection already exists.
+func (e *Engine) linkNote(newID, relatedID string) {
+	if e.noteStore == nil {
+		return
+	}
+	n, err := e.noteStore.Get(newID)
+	if err != nil || n == nil {
+		return
+	}
+	r, err := e.noteStore.Get(relatedID)
+	if err != nil || r == nil {
+		return
+	}
+
+	addUnique := func(ids []string, id string) []string {
+		for _, x := range ids {
+			if x == id {
+				return ids
+			}
+		}
+		return append(ids, id)
+	}
+	n.Connections = addUnique(n.Connections, relatedID)
+	r.Connections = addUnique(r.Connections, newID)
+	_ = e.noteStore.Update(*n)
+	_ = e.noteStore.Update(*r)
+}
+
+// AddNote persists an atomic note, invalidates the user's context cache,
+// and auto-links the note to the top-3 keyword-related existing notes.
+func (e *Engine) AddNote(note notes.AtomicNote) (string, error) {
+	if e.noteStore == nil {
+		return "", fmt.Errorf("note store not configured")
+	}
+	id, err := e.noteStore.Add(note)
+	if err != nil {
+		return "", err
+	}
+	e.cache.Delete("ctx:" + note.UserID)
+
+	// Semantic auto-linking: connect to top-3 keyword-related existing notes
+	if len(note.Keywords) > 0 {
+		related, _ := e.noteStore.SearchByKeywords(note.UserID, note.Keywords, 4) // 4 = top-3 + possibly self
+		count := 0
+		for _, r := range related {
+			if r.ID == id {
+				continue // skip self
+			}
+			if count >= 3 {
+				break
+			}
+			e.linkNote(id, r.ID)
+			count++
+		}
+	}
+	return id, nil
+}
+
+// UpdateNote updates an existing atomic note and invalidates the user's context cache.
+func (e *Engine) UpdateNote(note notes.AtomicNote) error {
+	if e.noteStore == nil {
+		return fmt.Errorf("note store not configured")
+	}
+	e.cache.Delete("ctx:" + note.UserID)
+	return e.noteStore.Update(note)
+}
+
+// DeleteNote removes an atomic note by ID and invalidates the user's context cache.
+func (e *Engine) DeleteNote(userID, noteID string) error {
+	if e.noteStore == nil {
+		return fmt.Errorf("note store not configured")
+	}
+	e.cache.Delete("ctx:" + userID)
+	return e.noteStore.Delete(noteID)
+}
+
 // GetContextForUserWithTask builds a task-aware memory context.
 // Instead of dumping all history, it scores each indexed entry against the task
 // keywords and returns only the most relevant summaries. Falls back to the 5 most
 // recent entries when no keyword overlap is found.
 // Works across all domains: coding, email, calendar, reports, scheduling, etc.
 func (e *Engine) GetContextForUserWithTask(userId string, task string) (string, error) {
+	// MemScheduler: route to appropriate retrieval depth
+	level := Schedule(task)
+
+	// Minimal: just profile + top-3 notes (no history)
+	if level == Minimal {
+		return e.minimalContext(userId, task)
+	}
+
 	// Delegate to MemEvolve pipeline if available
 	if e.pipeline != nil {
 		p := e.pipeline.Get()
@@ -174,7 +298,10 @@ func (e *Engine) GetContextForUserWithTask(userId string, task string) (string, 
 		return candidates[i].score > candidates[j].score
 	})
 
-	const maxRelevant = 8
+	maxRelevant := 8
+	if level == Detailed {
+		maxRelevant = 16
+	}
 	const maxFallback = 5
 
 	var historyLines []string
@@ -209,6 +336,39 @@ func (e *Engine) GetContextForUserWithTask(userId string, task string) (string, 
 			sb.WriteString("\n\n## Recent context\n")
 		}
 		sb.WriteString(strings.Join(historyLines, "\n"))
+	}
+
+	// Augment with atomic notes: vector search first (requires LLM), keyword fallback always runs.
+	if e.noteStore != nil {
+		var noteLines []string
+		seen := make(map[string]bool)
+
+		if e.llmClient != nil {
+			if emb, err := e.llmClient.Embed(task); err == nil && emb != nil {
+				if vectorNotes, err := e.noteStore.SearchByVector(userId, emb, 5); err == nil {
+					for _, n := range vectorNotes {
+						if !seen[n.ID] {
+							noteLines = append(noteLines, fmt.Sprintf("- [%s] %s", n.ID, n.Content))
+							seen[n.ID] = true
+						}
+					}
+				}
+			}
+		}
+
+		if kwNotes, err := e.noteStore.SearchByKeywords(userId, taskKw, 5); err == nil {
+			for _, n := range kwNotes {
+				if !seen[n.ID] {
+					noteLines = append(noteLines, fmt.Sprintf("- [%s] %s", n.ID, n.Content))
+					seen[n.ID] = true
+				}
+			}
+		}
+
+		if len(noteLines) > 0 {
+			sb.WriteString(fmt.Sprintf("\n\n## Memory Notes (%d relevant)\n", len(noteLines)))
+			sb.WriteString(strings.Join(noteLines, "\n"))
+		}
 	}
 
 	ctx := sb.String()
@@ -268,6 +428,29 @@ func taskCacheKey(task string) string {
 	// Replace characters unsafe for map keys
 	normalized = strings.NewReplacer("/", "-", ":", "-", " ", "_").Replace(normalized)
 	return normalized
+}
+
+func (e *Engine) minimalContext(userId, task string) (string, error) {
+	profile, err := e.profiles.Load(userId)
+	if err != nil {
+		profile = DefaultProfile(userId)
+	}
+	profileText := profile.Render()
+	if e.noteStore == nil {
+		return profileText, nil
+	}
+	kw := ExtractKeywords(task)
+	nts, _ := e.noteStore.SearchByKeywords(userId, kw, 3)
+	if len(nts) == 0 {
+		return profileText, nil
+	}
+	var sb strings.Builder
+	sb.WriteString(profileText)
+	sb.WriteString("\n\n## Memory Notes (top-3)\n")
+	for _, n := range nts {
+		sb.WriteString(fmt.Sprintf("- [%s] %s\n", n.ID, n.Content))
+	}
+	return sb.String(), nil
 }
 
 func estimateTokens(s string) int { return len(s) / 4 }

@@ -386,6 +386,7 @@ func (o *Orchestrator) runWorker(ctx context.Context, octx OrchestratorCtx, step
 				cb.OnError(fmt.Sprintf("[%s] %s", step.ID, msg))
 			}
 		},
+		OnMemoryTool: cb.OnMemoryTool,
 	}
 
 	pb := NewPromptBuilder(o.memoryEngine, o.skillsReg)

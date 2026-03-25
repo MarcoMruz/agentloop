@@ -63,10 +63,11 @@ type StoreFilter struct {
 
 // RetrievalQuery describes what memory to retrieve.
 type RetrievalQuery struct {
-	UserID    string
-	Task      string
-	ContextID string // For thread-scoped retrieval
-	MaxTokens int
+	UserID         string
+	Task           string
+	ContextID      string    // For thread-scoped retrieval
+	MaxTokens      int
+	QueryEmbedding []float32 // Optional: when non-nil, enables vector search in SQLiteNoteStore
 }
 
 // RetrievalResult holds retrieved memory formatted for prompt injection.

@@ -13,6 +13,7 @@ func New(rootPath string) (*Vault, error) {
 		filepath.Join(rootPath, "memory", "users"),
 		filepath.Join(rootPath, "memory", "contexts"),
 		filepath.Join(rootPath, "memory", "cache"),
+		filepath.Join(rootPath, "memory", "notes"),
 		filepath.Join(rootPath, "skills"),
 		filepath.Join(rootPath, "agents"),
 	} {
@@ -27,6 +28,9 @@ func (v *Vault) SessionsDir() string { return filepath.Join(v.RootPath, "session
 
 // AgentsDir returns the path to the agents directory within the vault.
 func (v *Vault) AgentsDir() string { return filepath.Join(v.RootPath, "agents") }
+
+// NotesDir returns the path to per-user atomic notes SQLite databases.
+func (v *Vault) NotesDir() string { return filepath.Join(v.RootPath, "memory", "notes") }
 
 // Path returns the vault root directory path.
 func (v *Vault) Path() string { return v.RootPath }

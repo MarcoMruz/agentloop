@@ -10,6 +10,7 @@ import (
 
 	"github.com/MarcoMruz/agentloop/internal/bridge"
 	"github.com/MarcoMruz/agentloop/internal/config"
+	"github.com/MarcoMruz/agentloop/internal/memory"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/metrics"
 )
@@ -23,6 +24,7 @@ type MetaAgent struct {
 	secCfg       config.SecurityConfig
 	evoCfg       config.EvolutionConfig
 	pipeline     *evolve.PipelineHolder
+	engine       *memory.Engine // nil = note proposals skipped
 }
 
 func NewMetaAgent(
@@ -31,6 +33,7 @@ func NewMetaAgent(
 	secCfg config.SecurityConfig,
 	evoCfg config.EvolutionConfig,
 	pipeline *evolve.PipelineHolder,
+	engine *memory.Engine,
 ) *MetaAgent {
 	return &MetaAgent{
 		vaultPath:    vaultPath,
@@ -40,6 +43,7 @@ func NewMetaAgent(
 		secCfg:       secCfg,
 		evoCfg:       evoCfg,
 		pipeline:     pipeline,
+		engine:       engine,
 	}
 }
 
@@ -100,8 +104,8 @@ func (m *MetaAgent) Evolve(outcome metrics.TaskOutcome) {
 		return
 	}
 
-	applier := NewApplier(m.vaultPath, m.agentsMDPath, m.skillsPath)
-	if err := applier.Apply(proposal); err != nil {
+	applier := NewApplier(m.vaultPath, m.agentsMDPath, m.skillsPath, m.engine)
+	if err := applier.Apply(proposal, outcome.UserID); err != nil {
 		slog.Error("failed to apply evolution", "error", err)
 		return
 	}

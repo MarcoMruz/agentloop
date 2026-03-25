@@ -8,6 +8,7 @@ import (
 
 	"github.com/MarcoMruz/agentloop/internal/memory"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
+	"github.com/MarcoMruz/agentloop/internal/memory/notes"
 )
 
 func TestBaselineEncoderWrapsExisting(t *testing.T) {
@@ -64,10 +65,14 @@ func TestBaselineManagerWrapsCompactor(t *testing.T) {
 func TestBaselineRetrieverWrapsExisting(t *testing.T) {
 	dir := t.TempDir()
 	profiles := memory.NewProfileStore(dir)
-	conversations := memory.NewConversationStore(dir, 30)
+	store, err := notes.NewSQLiteNoteStore(filepath.Join(dir, "notes"), 0)
+	if err != nil {
+		t.Fatalf("NewSQLiteNoteStore: %v", err)
+	}
+	defer store.Close()
 
-	conversations.Append("test-user", "user", "fix the authentication token refresh bug", "")
-	conversations.Append("test-user", "assistant", "I'll check the auth module and fix the token refresh", "")
+	store.Add(notes.AtomicNote{UserID: "test-user", Content: "fix the authentication token refresh bug", Keywords: []string{"authentication", "token", "refresh"}, Tags: []string{"auth"}, Description: "fix the authentication token refresh bug"})
+	store.Add(notes.AtomicNote{UserID: "test-user", Content: "I'll check the auth module and fix the token refresh", Keywords: []string{"auth", "token", "refresh"}, Tags: []string{"auth"}, Description: "check the auth module and fix the token refresh"})
 
 	cfg := &evolve.RetrieverConfig{
 		Strategy:       "jaccard",
@@ -76,7 +81,7 @@ func TestBaselineRetrieverWrapsExisting(t *testing.T) {
 		TopicBonus:     0.2,
 		Position:       "edges",
 	}
-	retriever := NewBaselineRetriever(profiles, conversations, cfg)
+	retriever := NewBaselineRetriever(profiles, store, cfg)
 
 	result, err := retriever.Retrieve(context.Background(), evolve.RetrievalQuery{
 		UserID: "test-user",
@@ -97,12 +102,18 @@ func TestPipelineReloadAtomicSwap(t *testing.T) {
 
 	defaults := evolve.DefaultPipelineConfig()
 	profiles := memory.NewProfileStore(dir)
-	conversations := memory.NewConversationStore(dir, 30)
+	store, err := notes.NewSQLiteNoteStore(filepath.Join(dir, "notes"), 0)
+	if err != nil {
+		t.Fatalf("NewSQLiteNoteStore: %v", err)
+	}
+	defer store.Close()
+	engine := memory.NewEngine(dir, 4000, "rolling", 30)
+	engine.SetNoteStore(store)
 	compactor := memory.NewCompactor("rolling")
 
 	encoder := NewBaselineEncoder(profiles)
-	storer := NewBaselineStorer(profiles, conversations)
-	retriever := NewBaselineRetriever(profiles, conversations, &defaults.Retriever)
+	storer := NewBaselineStorer(profiles, engine)
+	retriever := NewBaselineRetriever(profiles, store, &defaults.Retriever)
 	manager := NewBaselineManager(compactor)
 
 	holder := evolve.NewPipelineHolder(dir, defaults, encoder, storer, retriever, manager)

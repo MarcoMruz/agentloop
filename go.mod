@@ -3,7 +3,9 @@ module github.com/MarcoMruz/agentloop
 go 1.23.0
 
 require (
+	github.com/asg017/sqlite-vec-go-bindings v0.1.6
 	github.com/google/uuid v1.6.0
+	github.com/mattn/go-sqlite3 v1.14.37
 	github.com/spf13/viper v1.21.0
 	gopkg.in/yaml.v3 v3.0.1
 )

@@ -2,16 +2,20 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 
 	"github.com/MarcoMruz/agentloop/internal/agent"
+	"github.com/MarcoMruz/agentloop/internal/bridge"
 	"github.com/MarcoMruz/agentloop/internal/config"
 	"github.com/MarcoMruz/agentloop/internal/memory"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/meta"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/metrics"
+	"github.com/MarcoMruz/agentloop/internal/memory/notes"
 	"github.com/MarcoMruz/agentloop/internal/skills"
 	"github.com/MarcoMruz/agentloop/internal/vault"
 )
@@ -181,6 +185,74 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 				req.Broadcaster.Broadcast(sess.ID, "event.error", map[string]any{
 					"sessionId": sess.ID, "message": msg,
 				})
+			},
+			OnMemoryTool: func(ev bridge.MemoryToolEvent) {
+				if ev.Operation == "retrieve" {
+					// Synchronous: file must be written before execute() reads it
+					userID := sess.UserID
+					if ev.RetrievePath == "" {
+						return
+					}
+					if m.memory.NoteStore() == nil {
+						_ = os.WriteFile(ev.RetrievePath, []byte("[]"), 0600)
+						return
+					}
+					topK := ev.TopK
+					if topK <= 0 {
+						topK = 5
+					}
+					kw := memory.ExtractKeywords(ev.Query)
+					results, err := m.memory.NoteStore().SearchByKeywords(userID, kw, topK)
+					if err != nil || len(results) == 0 {
+						_ = os.WriteFile(ev.RetrievePath, []byte("[]"), 0600)
+						return
+					}
+					data, err := json.Marshal(results)
+					if err != nil {
+						_ = os.WriteFile(ev.RetrievePath, []byte("[]"), 0600)
+						return
+					}
+					_ = os.WriteFile(ev.RetrievePath, data, 0600)
+					return
+				}
+				go func() {
+					userID := sess.UserID
+					switch ev.Operation {
+					case "add":
+						note := notes.AtomicNote{
+							UserID:   userID,
+							Content:  ev.Content,
+							Keywords: ev.Keywords,
+							Tags:     ev.Tags,
+						}
+						if _, err := m.memory.AddNote(note); err != nil {
+							slog.Debug("memory Add_memory failed", "err", err)
+						}
+					case "update":
+						if ev.NoteID == "" {
+							slog.Debug("memory update: missing note ID")
+							return
+						}
+						note := notes.AtomicNote{
+							ID:       ev.NoteID,
+							UserID:   userID,
+							Content:  ev.Content,
+							Keywords: ev.Keywords,
+							Tags:     ev.Tags,
+						}
+						if err := m.memory.UpdateNote(note); err != nil {
+							slog.Debug("memory Update_memory failed", "err", err)
+						}
+					case "delete":
+						if ev.NoteID == "" {
+							slog.Debug("memory delete: missing note ID")
+							return
+						}
+						if err := m.memory.DeleteNote(userID, ev.NoteID); err != nil {
+							slog.Debug("memory Delete_memory failed", "err", err)
+						}
+					}
+				}()
 			},
 		})
 

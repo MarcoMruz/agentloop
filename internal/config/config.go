@@ -30,13 +30,22 @@ type VaultConfig struct {
 	Path string `mapstructure:"path"`
 }
 
+type MemoryAgentConfig struct {
+	Enabled  bool   `mapstructure:"enabled"`
+	Binary   string `mapstructure:"binary"`
+	Provider string `mapstructure:"provider"`
+	Model    string `mapstructure:"model"`
+}
+
 type MemoryConfig struct {
-	MaxProfileEntries      int    `mapstructure:"max_profile_entries"`
-	ConversationRetainDays int    `mapstructure:"conversation_retain_days"`
-	CompactionThreshold    int    `mapstructure:"compaction_threshold"`
-	CompactionStrategy     string `mapstructure:"compaction_strategy"`
-	MaxContextTokens       int    `mapstructure:"max_context_tokens"`
-	PromptCacheTTLMinutes  int    `mapstructure:"prompt_cache_ttl_minutes"`
+	MaxProfileEntries      int                `mapstructure:"max_profile_entries"`
+	ConversationRetainDays int                `mapstructure:"conversation_retain_days"`
+	CompactionThreshold    int                `mapstructure:"compaction_threshold"`
+	CompactionStrategy     string             `mapstructure:"compaction_strategy"`
+	MaxContextTokens       int                `mapstructure:"max_context_tokens"`
+	PromptCacheTTLMinutes  int                `mapstructure:"prompt_cache_ttl_minutes"`
+	EmbeddingDims          int                `mapstructure:"embedding_dims"`
+	Agent                  MemoryAgentConfig  `mapstructure:"agent"`
 }
 
 type SessionConfig struct {
@@ -138,6 +147,13 @@ func Defaults() *Config {
 			CompactionStrategy:     "rolling",
 			MaxContextTokens:       3000,
 			PromptCacheTTLMinutes:  60,
+			EmbeddingDims:          0,
+			Agent: MemoryAgentConfig{
+				Enabled:  false,
+				Binary:   "pi",
+				Provider: "anthropic",
+				Model:    "claude-haiku-4-5-20251001",
+			},
 		},
 		Sessions: SessionConfig{
 			MaxConcurrent:  5,

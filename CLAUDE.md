@@ -224,8 +224,12 @@ agentloop/
 │   │           ├── log.go
 │   │           └── version_test.go
 │   │
+│   ├── pirun/
+│   │   └── pirun.go                # Shared pi session runner — RunTextSession()
+│   │
 │   ├── skills/
-│   │   └── registry.go             # Skill registry (name → instructions + triggers)
+│   │   ├── registry.go             # Skill registry (name → tags + instructions + files)
+│   │   └── agent.go                # SkillAgent — LLM-driven skill selection side process
 │   │
 │   ├── vault/
 │   │   ├── vault.go                # Vault directory management
@@ -369,6 +373,16 @@ go test ./internal/bridge/... -v
 | `TestExtractDeltaEmptyResponse` | `internal/memory/compaction_delta_test.go` | Empty LLM response returns empty string |
 | `TestThreadIsolation_FullRoundTrip` | `internal/memory/integration_test.go` | Full record→retrieve round-trip preserves thread isolation |
 | `TestThreadIsolation_NewThread_GetsOnlyProfile` | `internal/memory/integration_test.go` | New thread context contains only profile, no history bleed |
+| `TestRegistryCatalog` | `internal/skills/registry_test.go` | `Catalog()` returns all skills as `SkillCatalogEntry` (no instructions) |
+| `TestSkillLoadWithFiles` | `internal/skills/registry_test.go` | Auto-scan files, frontmatter description inheritance, absolute paths set |
+| `TestSkillFileNoExtension` | `internal/skills/registry_test.go` | Files with no extension get `Type: ""` and are included |
+| `TestSkillTagsMigration` | `internal/skills/registry_test.go` | Old `triggers` field silently ignored; `tags` parsed correctly |
+| `TestParseSkillResponseMatch` | `internal/skills/agent_test.go` | SkillAgent returns correct skill name |
+| `TestParseSkillResponseNone` | `internal/skills/agent_test.go` | "none" response returns empty string |
+| `TestSkillAgentFindEmptyCatalog` | `internal/skills/agent_test.go` | Empty catalog short-circuits without calling pi |
+| `TestSkillAgentConfigDefaults` | `internal/config/config_test.go` | SkillAgentConfig fields default to empty (inherit from pi) |
+| `TestSkillToolHandlerRegistration` | `internal/bridge/rpc_test.go` | SetSkillToolHandler registers callback |
+| `TestRunTextSessionSignature` | `internal/pirun/pirun_test.go` | RunTextSession signature and basic behavior |
 
 ### Test Conventions
 
@@ -451,7 +465,7 @@ Do NOT add dependencies without explicit approval. The project intentionally has
 | `sessions` | `SessionConfig` | Max concurrent, max per user, timeout, token budget, tool call limit, stuck threshold, LRU eviction |
 | `hitl` | `HITLConfig` | Always-pause tools, timeout, timeout action |
 | `security` | `SecurityConfig` | Allowed paths, blocked env prefixes, blocked CIDRs, docker rules, **injection protection** |
-| `skills` | `SkillsConfig` | Skill directory paths |
+| `skills` | `SkillsConfig` | Skill directory paths; `agent` sub-config for SkillAgent (binary, provider, model) |
 | `logging` | `LoggingConfig` | Log level, log file path |
 | `evolution` | `EvolutionConfig` | MemEvolve: enabled, score threshold, meta token budget, rate limiting, snapshot retention |
 
@@ -627,9 +641,19 @@ Adds a self-improving memory layer that observes task outcomes and autonomously 
 
 ### `internal/skills` — Skills Registry
 
-Skills are on-demand instruction sets loaded from the vault. Each skill directory contains a `SKILL.md` file with YAML frontmatter (name, description, triggers) and markdown body (instructions).
+Skills are on-demand instruction sets loaded from the vault. Each skill directory contains a `SKILL.md` file with YAML frontmatter (name, description, tags) and markdown body (instructions). Additional files in the skill directory are auto-scanned and exposed as `SkillFile` entries (with absolute path, filename, type/extension, and an optional description inherited from frontmatter).
 
-**`Registry`** — scans skill directories, parses SKILL.md files. `DetectSkills()` in PromptBuilder matches task text against skill triggers.
+**`Skill`** struct fields: `Name`, `Description`, `Tags []string`, `Instructions` (full SKILL.md body), `Files []SkillFile`.
+
+**`SkillFile`** struct fields: `Name` (filename), `Path` (absolute), `Type` (extension without dot, e.g. `"go"`, `"ts"`, or `""` for no extension), `Description` (inherited from skill frontmatter).
+
+**`Registry`** — scans skill directories, parses SKILL.md files, auto-discovers sibling files. `Catalog()` returns `[]SkillCatalogEntry` — a compact list (name + description + tags, no full instructions or files) suitable for sending to the `SkillAgent`.
+
+**`SkillAgent`** (`agent.go`) — short-lived pi subprocess that selects the best skill for a query. `Find(ctx, query)` builds a prompt from `Registry.Catalog()`, runs a single-turn pi session via `pirun.RunTextSession`, and parses the response. Returns the matched skill name (empty string if none). `parseSkillResponse()` extracts the first non-empty, non-`"none"` line. If the catalog is empty, `Find()` short-circuits without spawning pi.
+
+**`Find_skill` tool** — a pi tool (registered via `SetSkillToolHandler` on the bridge) that triggers skill selection at runtime. When pi calls `Find_skill`, the Go bridge invokes `SkillAgent.Find()` and returns the result to the main agent, which can then load and apply the skill's instructions and files.
+
+**`AGENTLOOP_SKILL_LOAD_PATH`** env var — used for IPC when the skill tool result needs to be written to a temp file path for the main pi session to read.
 
 ### `internal/vault` — Session Persistence
 
@@ -736,6 +760,17 @@ Helpers: `Retryable()`, `Fatal()`, `UserAbort()`, `ToolFailure()`, `IsRetryable(
 - `Init(level, filePath)` sets up logger with stderr + optional file
 - Levels: `"debug"`, `"info"`, `"warn"`, `"error"`
 - Global `Logger` var, also set as `slog.SetDefault()`
+
+### `internal/pirun` — Shared Pi Session Runner
+
+**`RunTextSession(ctx, piCfg, secCfg, workDir, promptID, prompt)`** — starts a pi subprocess, sends a single prompt, collects the full text response, and returns it. The subprocess exits after responding.
+
+Used by:
+- `SkillAgent.Find()` — skill selection side process
+- `MetaAgent.Evolve()` — memory evolution side process
+- `Orchestrator` — planner/judge single-turn sessions
+
+Only imports `internal/bridge` and `internal/config` — safe to import from any package without circular dependency risk.
 
 ---
 
@@ -851,9 +886,10 @@ If adding new security behavior, add corresponding test cases with `t.Fatal("SEC
 ### Adding a New Skill
 
 1. Create directory in vault skills: `~/.local/share/agentloop/vault/skills/my-skill/`
-2. Create `SKILL.md` with YAML frontmatter (name, description, triggers) + markdown body
-3. Skills are auto-loaded by the Registry on server start
-4. Triggers are matched against task text by `PromptBuilder.DetectSkills()`
+2. Create `SKILL.md` with YAML frontmatter (name, description, tags) + markdown body (instructions)
+3. Optionally add supporting files (e.g. `.go`, `.ts`, templates) alongside `SKILL.md` — they are auto-scanned as `SkillFile` entries
+4. Skills are auto-loaded by the Registry on server start
+5. Skills are discovered at runtime via the `Find_skill` tool; `SkillAgent.Find()` uses LLM-based matching against `tags` to select the best skill for a query — there is no static trigger matching
 
 ### Writing Tests
 

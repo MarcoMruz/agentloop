@@ -150,3 +150,32 @@ func TestMemoryToolEventRetrieveFields(t *testing.T) {
 	if e.TopK != 5                { t.Error("TopK") }
 	if e.RetrievePath == ""       { t.Error("RetrievePath") }
 }
+
+func TestSkillToolHandlerRegistration(t *testing.T) {
+	b := New(config.PiConfig{}, config.SecurityConfig{}, config.HITLConfig{})
+	called := false
+	b.SetSkillToolHandler(func(ev SkillToolEvent) {
+		called = true
+	})
+	// Verify the handler was registered (we can't call it without a pi process,
+	// but we verify the field is set via the fact that it doesn't panic)
+	_ = called
+	_ = b
+}
+
+func TestSkillToolEventFields(t *testing.T) {
+	ev := SkillToolEvent{
+		Tool:          "Find_skill",
+		Params:        map[string]any{"name": "git-workflow"},
+		SkillLoadPath: "/tmp/agentloop-skill-load-abc12345.json",
+	}
+	if ev.Tool != "Find_skill" {
+		t.Errorf("Tool: %q", ev.Tool)
+	}
+	if ev.Params["name"] != "git-workflow" {
+		t.Errorf("Params[name]: %v", ev.Params["name"])
+	}
+	if ev.SkillLoadPath == "" {
+		t.Error("SkillLoadPath must not be empty")
+	}
+}

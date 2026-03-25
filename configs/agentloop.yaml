@@ -238,6 +238,10 @@ security:
 skills:
     skill_dirs:
         - ~/.local/share/agentloop/vault/skills
+    agent:
+        binary: ""        # inherits pi.binary if blank
+        provider: ""      # inherits pi.provider if blank
+        model: ""         # inherits pi.model if blank; use a cheaper model for skill selection, e.g. claude-haiku-4-5-20251001
 
 logging:
     level: debug

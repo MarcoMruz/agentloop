@@ -52,6 +52,7 @@ type Callbacks struct {
 	OnDone        func(output string, stats RunStats)
 	OnError       func(msg string)
 	OnMemoryTool  bridge.MemoryToolHandler
+	OnSkillTool   bridge.SkillToolHandler
 }
 
 // SessionInterface is the subset of Session needed by the agent core.
@@ -374,6 +375,10 @@ func (c *Core) Run(ctx context.Context, userId string, task string, workDir stri
 
 	if c.cb.OnMemoryTool != nil {
 		b.SetMemoryToolHandler(c.cb.OnMemoryTool)
+	}
+
+	if c.cb.OnSkillTool != nil {
+		b.SetSkillToolHandler(c.cb.OnSkillTool)
 	}
 
 	// Start pi

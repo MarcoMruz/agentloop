@@ -25,7 +25,7 @@ Let the main pi agent discover and load the right skill autonomously at runtime 
 
 One new pi tool (`Find_skill`) exposed via a TypeScript extension (`skill-tools.ts`). When the main agent calls it, the Go side spins up a lightweight `SkillAgent` — a short-lived pi subprocess that reasons over the full skill catalog and returns the best match. The main agent gets back only the result (skill instructions + files). No catalog browsing, no pagination, no intermediate context overhead.
 
-Pattern: `MetaAgent.runPiSession()` in `internal/memory/evolve/meta/agent.go` — a bridge-based pi subprocess that receives a prompt, streams a response, and exits.
+**Shared utility:** `runPiSession()` currently lives privately inside `MetaAgent`. It is extracted into a new shared package `internal/pirun` so that `SkillAgent`, `MetaAgent`, and any future short-lived subprocess consumers can reuse it without duplication. `MetaAgent.runPiSession()` is replaced with a call to `pirun.RunTextSession()`.
 
 ### Agent Interaction Pattern
 
@@ -140,9 +140,42 @@ Set `Dir` to the absolute skill directory path.
 
 ---
 
-### 3. `SkillAgent` (`internal/skills/agent.go`)
+### 3. Shared Pi Session Runner (`internal/pirun/pirun.go`)
 
-A short-lived pi subprocess that reasons over the skill catalog and returns the best matching skill name. Modelled directly on `MetaAgent.runPiSession()`.
+Extracted from `MetaAgent.runPiSession()` into a standalone package that any component can use to run a short-lived, single-turn pi subprocess.
+
+```go
+package pirun
+
+// RunTextSession starts a pi subprocess, sends a single prompt, collects the
+// full text response, and returns it. The subprocess exits after responding.
+// workDir is used as the pi working directory; pass os.TempDir() when no real
+// workdir is needed.
+func RunTextSession(
+    ctx     context.Context,
+    piCfg  config.PiConfig,
+    secCfg config.SecurityConfig,
+    workDir string,
+    promptID string,
+    prompt  string,
+) (string, error)
+```
+
+**Implementation** (identical to the current `MetaAgent.runPiSession()` body):
+1. `b := bridge.New(piCfg, secCfg, config.HITLConfig{})`
+2. Collect `text_delta` events into a `strings.Builder`
+3. `b.Start(ctx, workDir)` → `b.Prompt(ctx, promptID, prompt)` → `<-b.Done()` → `b.Stop()`
+4. Return accumulated response string
+
+**Dependencies:** only `internal/bridge` and `internal/config` — no higher-level packages. Safe to import from `internal/memory/evolve/meta`, `internal/skills`, or any future consumer without circular dependency risk.
+
+**`MetaAgent` migration:** `runPiSession()` in `internal/memory/evolve/meta/agent.go` is replaced with a call to `pirun.RunTextSession(ctx, m.piCfg, m.secCfg, workDir, "meta-evolve", prompt)` and the private method is deleted.
+
+---
+
+### 4. `SkillAgent` (`internal/skills/agent.go`)
+
+A short-lived pi subprocess that reasons over the skill catalog and returns the best matching skill name. Uses `pirun.RunTextSession()` from `internal/pirun`.
 
 ```go
 type SkillAgent struct {
@@ -160,13 +193,8 @@ func (a *SkillAgent) Find(ctx context.Context, query string, catalog []SkillCata
 **`Find()` implementation:**
 
 1. Build a prompt from `query` + `catalog` (see prompt format below)
-2. Create `bridge.New(a.piCfg, a.secCfg, config.HITLConfig{})` — no HITL for this subprocess
-3. Set event handler to collect `text_delta` into a `strings.Builder`
-4. `b.Start(ctx, os.TempDir())` — no real workdir needed
-5. `b.Prompt(ctx, "skill-find", prompt)`
-6. `<-b.Done()`
-7. `b.Stop()`
-8. Parse the response: extract the first skill name found in the response that exists in the catalog; if the response is "none" or no valid name is found, return `""`
+2. Call `pirun.RunTextSession(ctx, a.piCfg, a.secCfg, os.TempDir(), "skill-find", prompt)`
+3. Parse the response: extract the first skill name found in the response that exists in the catalog; if the response is "none" or no valid name is found, return `""`
 
 **Prompt format:**
 
@@ -203,7 +231,7 @@ type SkillCatalogEntry struct {
 
 ---
 
-### 4. Bridge IPC (`internal/bridge/`)
+### 5. Bridge IPC (`internal/bridge/`)
 
 Follows the established `Retrieve_memory` pattern: one per-session temp file with UUID-based name, env var set before `b.Start()`, cleaned up in `Stop()`.
 
@@ -252,7 +280,7 @@ func (b *PiBridge) SetSkillToolHandler(h SkillToolHandler) { b.onSkillTool = h }
 
 ---
 
-### 5. Wiring: `Callbacks` → `core.go` → `session/manager.go`
+### 6. Wiring: `Callbacks` → `core.go` → `session/manager.go`
 
 Follows the exact same three-step mechanism as `OnMemoryTool`:
 
@@ -296,7 +324,7 @@ OnSkillTool: func(ev bridge.SkillToolEvent) {
 
 ---
 
-### 6. TypeScript Extension (`extensions/skill-tools.ts`)
+### 7. TypeScript Extension (`extensions/skill-tools.ts`)
 
 One tool registered via `pi.addTool()`:
 
@@ -362,25 +390,27 @@ Main agent reads instructions + file listing, invokes files via bash/read tools
 
 ---
 
-## What Is Removed
+## What Is Removed / Refactored
 
-| Item | Location | Reason |
+| Item | Location | Action |
 |---|---|---|
-| `Triggers []string` | `Skill` struct | Replaced by `Tags` |
-| `DetectSkills()` | `prompt_builder.go` | No longer needed |
-| `skills *skills.Registry` field + param | `PromptBuilder` / `NewPromptBuilder` | No longer needed |
-| `skillNames []string` param | `PromptBuilder.Build()` | No longer needed |
-| Skill injection loop | `prompt_builder.go` | Skills loaded on demand via tool |
-| `skillNames` call | `core.go` | No longer needed |
-| `o.skillsReg` arg in `NewPromptBuilder` calls | `orchestrator.go` (×2) | No longer needed |
+| `Triggers []string` | `Skill` struct | Removed — replaced by `Tags` |
+| `DetectSkills()` | `prompt_builder.go` | Removed |
+| `skills *skills.Registry` field + param | `PromptBuilder` / `NewPromptBuilder` | Removed |
+| `skillNames []string` param | `PromptBuilder.Build()` | Removed |
+| Skill injection loop | `prompt_builder.go` | Removed — skills loaded on demand |
+| `skillNames` call | `core.go` | Removed |
+| `o.skillsReg` arg in `NewPromptBuilder` calls | `orchestrator.go` (×2) | Removed |
+| `MetaAgent.runPiSession()` | `internal/memory/evolve/meta/agent.go` | Replaced with `pirun.RunTextSession()` |
 
 ---
 
 ## Additional Updates
 
-- **`cmd/agentloop-server/main.go`:** Construct `skills.NewSkillAgent(piCfg, secCfg)` and pass to `session.NewManager()`
+- **`internal/pirun/pirun.go`:** New shared package — `RunTextSession()` extracted from `MetaAgent`
+- **`cmd/agentloop-server/main.go`:** Construct `skills.NewSkillAgent(skillPiCfg, secCfg)` and pass to `session.NewManager()`
 - **`internal/session/manager.go`:** Add `skillAgent *skills.SkillAgent` field; construct in `NewManager()`
-- **`CLAUDE.md`:** Update Skills Registry section — describe tool-based discovery via `Find_skill` and `SkillAgent`; remove references to `DetectSkills()` and trigger-based matching
+- **`CLAUDE.md`:** Update Skills Registry section — describe `Find_skill` tool and `SkillAgent`; remove references to `DetectSkills()` and trigger-based matching; add `internal/pirun` to directory structure
 
 ---
 
@@ -397,6 +427,7 @@ Main agent reads instructions + file listing, invokes files via bash/read tools
 
 ## Testing
 
+- `TestRunTextSession` — `pirun.RunTextSession()` collects text_delta events and returns concatenated response
 - `TestSkillAgentFindMatch` — catalog with matching skill, agent returns correct name
 - `TestSkillAgentFindNoMatch` — catalog with no relevant skills, agent returns `""`
 - `TestSkillAgentFindNone` — agent responds "none", returns `""`

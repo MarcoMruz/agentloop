@@ -175,7 +175,7 @@ agentloop/
 │   │
 │   ├── agent/
 │   │   ├── core.go                 # Agent core: builds prompts, manages pi, HITL
-│   │   └── prompt_builder.go       # Assembles prompt: memory + skills + task
+│   │   └── prompt_builder.go       # Assembles prompt: memory + task
 │   │
 │   ├── bridge/
 │   │   ├── rpc.go                  # Pi subprocess RPC client
@@ -253,7 +253,8 @@ agentloop/
 ├── extensions/                     # Pi extensions (loaded by pi subprocess)
 │   ├── security-policy.ts
 │   ├── docker-guard.ts
-│   └── memory-tools.ts             # Add_memory, Update_memory, Delete_memory, Retrieve_memory tools
+│   ├── memory-tools.ts             # Add_memory, Update_memory, Delete_memory, Retrieve_memory tools
+│   └── skill-tools.ts              # Find_skill tool for LLM-driven skill selection
 │
 ├── agents-md/
 │   └── AGENTS.md                   # Instructions pi loads for agent behavior
@@ -416,6 +417,7 @@ import "github.com/user/agentloop/internal/memory/evolve/version"
 import "github.com/user/agentloop/internal/security"
 import "github.com/user/agentloop/internal/server"
 import "github.com/user/agentloop/internal/session"
+import "github.com/user/agentloop/internal/pirun"
 import "github.com/user/agentloop/internal/skills"
 import "github.com/user/agentloop/internal/vault"
 ```
@@ -786,6 +788,7 @@ Extensions are TypeScript files in `extensions/` that pi loads via the `-e` flag
 | `docker-guard.ts` | Permission gate | Validates docker subcommands + volume mounts |
 | `prompt-injection-guard.ts` | Permission gate | Detects prompt injection attempts from risky sources |
 | `memory-tools.ts` | Custom tools | Exposes `Add_memory`, `Update_memory`, `Delete_memory`, `Retrieve_memory` tools to pi |
+| `skill-tools.ts` | Custom tools | Exposes `Find_skill` tool — LLM-driven skill selection at runtime |
 
 ### Extension Environment Variables
 
@@ -801,7 +804,8 @@ Extensions are TypeScript files in `extensions/` that pi loads via the `-e` flag
 | `AGENTLOOP_MAX_CONTENT_LENGTH` | **prompt-injection-guard.ts** | **Number** | **50000** |
 | `AGENTLOOP_APPROVAL_TIER` | **prompt-injection-guard.ts** | **"owner"/"admin"/"auto-deny"** | **"owner"** |
 | `AGENTLOOP_SANITIZE_MEMORY` | **prompt-injection-guard.ts** | **"true"/"false"** | **true** |
-| `AGENTLOOP_RETRIEVE_PATH` | memory-tools.ts | Absolute path to temp file | Set by server on session start |
+| `AGENTLOOP_RETRIEVE_PATH` | memory-tools.ts | Absolute path to temp file | Set by server per session |
+| `AGENTLOOP_SKILL_LOAD_PATH` | skill-tools.ts | Absolute path to temp file | Set by server per session |
 
 ### Adding a New Extension
 

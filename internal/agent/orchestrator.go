@@ -8,13 +8,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MarcoMruz/agentloop/internal/bridge"
 	"github.com/MarcoMruz/agentloop/internal/config"
+	"github.com/MarcoMruz/agentloop/internal/pirun"
 	"github.com/MarcoMruz/agentloop/internal/memory"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/metrics"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/meta"
-	"github.com/MarcoMruz/agentloop/internal/skills"
 	"github.com/google/uuid"
 )
 
@@ -120,7 +119,6 @@ func (r *OrchestratorResult) CollectToolsUsed() []string {
 type Orchestrator struct {
 	loader       *AgentLoader
 	memoryEngine *memory.Engine
-	skillsReg    *skills.Registry
 	pipeline     *evolve.PipelineHolder
 	collector    *metrics.Collector
 	metaAgent    *meta.MetaAgent
@@ -132,7 +130,6 @@ type Orchestrator struct {
 func NewOrchestrator(
 	loader *AgentLoader,
 	memEngine *memory.Engine,
-	skillsReg *skills.Registry,
 	pipeline *evolve.PipelineHolder,
 	collector *metrics.Collector,
 	metaAgent *meta.MetaAgent,
@@ -142,7 +139,6 @@ func NewOrchestrator(
 	return &Orchestrator{
 		loader:       loader,
 		memoryEngine: memEngine,
-		skillsReg:    skillsReg,
 		pipeline:     pipeline,
 		collector:    collector,
 		metaAgent:    metaAgent,
@@ -179,7 +175,7 @@ func (o *Orchestrator) Run(ctx context.Context, octx OrchestratorCtx, task strin
 	// Single mode: delegate to Core.Run
 	if plan.Mode == "single" {
 		slog.Info("planner chose single mode", "orchestration_id", octx.OrchestrationID)
-		pb := NewPromptBuilder(o.memoryEngine, o.skillsReg)
+		pb := NewPromptBuilder(o.memoryEngine)
 		core := New(octx.Config.Worker, o.secCfg, o.hitlCfg, pb, cb)
 		result := core.Run(ctx, octx.UserID, task, octx.WorkDir, sess)
 		return &OrchestratorResult{
@@ -230,7 +226,7 @@ func (o *Orchestrator) Run(ctx context.Context, octx OrchestratorCtx, task strin
 			if o.collector != nil {
 				o.collector.Record(taskOutcome) // persist first!
 			}
-			o.metaAgent.Evolve(taskOutcome)
+			o.metaAgent.Evolve(ctx, taskOutcome)
 			evolutionCount++
 			iterations[len(iterations)-1].Evolved = true
 
@@ -305,7 +301,7 @@ func (o *Orchestrator) getMemoryContext(userID, task, conversationCtxID string) 
 // runPlanner runs a read-only pi session to generate a plan.
 func (o *Orchestrator) runPlanner(ctx context.Context, octx OrchestratorCtx, task, memCtx string, instructions []AgentInstruction, prevVerdict *JudgeVerdict, prevSummaries []WorkerSummary) (*Plan, error) {
 	prompt := o.buildPlannerPrompt(task, memCtx, instructions, prevVerdict, prevSummaries)
-	response, err := o.runReadOnlyPi(ctx, octx.Config.Planner, octx.WorkDir, prompt)
+	response, err := pirun.RunTextSession(ctx, octx.Config.Planner, o.secCfg, octx.WorkDir, "orchestrator", prompt)
 	if err != nil {
 		return nil, fmt.Errorf("planner pi session: %w", err)
 	}
@@ -320,7 +316,7 @@ func (o *Orchestrator) runPlanner(ctx context.Context, octx OrchestratorCtx, tas
 // runJudge runs a read-only pi session to evaluate worker output against success criteria.
 func (o *Orchestrator) runJudge(ctx context.Context, octx OrchestratorCtx, task string, plan *Plan, summaries []WorkerSummary, instructions []AgentInstruction, iteration int) *JudgeVerdict {
 	prompt := o.buildJudgePrompt(task, plan, summaries, instructions, iteration)
-	response, err := o.runReadOnlyPi(ctx, octx.Config.Judge, octx.WorkDir, prompt)
+	response, err := pirun.RunTextSession(ctx, octx.Config.Judge, o.secCfg, octx.WorkDir, "orchestrator", prompt)
 	if err != nil {
 		slog.Error("judge pi session failed", "error", err)
 		return &JudgeVerdict{Pass: false, Reasoning: fmt.Sprintf("judge failed: %v", err), Iteration: iteration}
@@ -389,7 +385,7 @@ func (o *Orchestrator) runWorker(ctx context.Context, octx OrchestratorCtx, step
 		OnMemoryTool: cb.OnMemoryTool,
 	}
 
-	pb := NewPromptBuilder(o.memoryEngine, o.skillsReg)
+	pb := NewPromptBuilder(o.memoryEngine)
 	core := New(octx.Config.Worker, o.secCfg, o.hitlCfg, pb, workerCb)
 	result := core.Run(ctx, octx.UserID, prompt, octx.WorkDir, sess)
 
@@ -410,28 +406,6 @@ func (o *Orchestrator) runWorker(ctx context.Context, octx OrchestratorCtx, step
 	}
 }
 
-// runReadOnlyPi runs a read-only pi session and returns the text response.
-func (o *Orchestrator) runReadOnlyPi(ctx context.Context, piCfg config.PiConfig, workDir, prompt string) (string, error) {
-	b := bridge.New(piCfg, o.secCfg, config.HITLConfig{})
-	var response strings.Builder
-	b.SetEventHandler(func(event bridge.RPCEvent) error {
-		if event.Type == "message_update" && event.AssistantMessageEvent != nil {
-			if event.AssistantMessageEvent.Type == "text_delta" {
-				response.WriteString(event.AssistantMessageEvent.Delta)
-			}
-		}
-		return nil
-	})
-	if err := b.Start(ctx, workDir); err != nil {
-		return "", fmt.Errorf("start pi: %w", err)
-	}
-	defer b.Stop()
-	if err := b.Prompt(ctx, "orchestrator", prompt); err != nil {
-		return "", fmt.Errorf("prompt pi: %w", err)
-	}
-	<-b.Done()
-	return response.String(), nil
-}
 
 // buildPlannerPrompt constructs the planner prompt from task, memory, instructions, and optional prior feedback.
 func (o *Orchestrator) buildPlannerPrompt(task, memCtx string, instructions []AgentInstruction, prevVerdict *JudgeVerdict, prevSummaries []WorkerSummary) string {

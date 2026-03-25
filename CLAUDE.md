@@ -645,15 +645,17 @@ Adds a self-improving memory layer that observes task outcomes and autonomously 
 
 Skills are on-demand instruction sets loaded from the vault. Each skill directory contains a `SKILL.md` file with YAML frontmatter (name, description, tags) and markdown body (instructions). Additional files in the skill directory are auto-scanned and exposed as `SkillFile` entries (with absolute path, filename, type/extension, and an optional description inherited from frontmatter).
 
-**`Skill`** struct fields: `Name`, `Description`, `Tags []string`, `Instructions` (full SKILL.md body), `Files []SkillFile`, `Dir` (absolute skill directory path).
+**`Skill`** struct fields: `Name`, `Description`, `Tags []string`, `Instructions` (full SKILL.md body), `Files []SkillFile`.
 
-**`SkillFile`** struct fields: `Name` (filename), `Path` (absolute), `Type` (extension without dot, e.g. `"sh"`, `"ts"`, or `""` for no extension), `Description` (inherited from skill frontmatter manifest).
+**`SkillFile`** struct fields: `Name` (filename), `Path` (absolute), `Type` (extension without dot, e.g. `"go"`, `"ts"`, or `""` for no extension), `Description` (inherited from skill frontmatter).
 
-**`Registry`** — scans skill directories, parses SKILL.md files, auto-discovers sibling files. `Catalog()` returns `[]SkillCatalogEntry` — a compact list (name + description + tags, no instructions or files) for the `SkillAgent`.
+**`Registry`** — scans skill directories, parses SKILL.md files, auto-discovers sibling files. `Catalog()` returns `[]SkillCatalogEntry` — a compact list (name + description + tags, no full instructions or files) suitable for sending to the `SkillAgent`.
 
-**`SkillAgent`** (`agent.go`) — short-lived pi subprocess that selects the best skill for a query. `Find(ctx, query, catalog)` builds a prompt from the catalog, runs a single-turn pi session via `pirun.RunTextSession`, and returns the matched skill name (empty string if none). Short-circuits without spawning pi when catalog is empty.
+**`SkillAgent`** (`agent.go`) — short-lived pi subprocess that selects the best skill for a query. `Find(ctx, query)` builds a prompt from `Registry.Catalog()`, runs a single-turn pi session via `pirun.RunTextSession`, and parses the response. Returns the matched skill name (empty string if none). `parseSkillResponse()` extracts the first non-empty, non-`"none"` line. If the catalog is empty, `Find()` short-circuits without spawning pi.
 
-**`Find_skill` tool** — pi tool (in `extensions/skill-tools.ts`) that triggers skill selection at runtime. When the main pi agent calls `Find_skill`, the Go bridge intercepts the `tool_execution_start` event, invokes `SkillAgent.Find()`, and writes the full `Skill` JSON to `AGENTLOOP_SKILL_LOAD_PATH` for the TS execute() to return to the agent. `Find_skill` events are silently consumed by the bridge — not forwarded to `OnToolUse`.
+**`Find_skill` tool** — a pi tool (registered via `SetSkillToolHandler` on the bridge) that triggers skill selection at runtime. When pi calls `Find_skill`, the Go bridge invokes `SkillAgent.Find()` and returns the result to the main agent, which can then load and apply the skill's instructions and files.
+
+**`AGENTLOOP_SKILL_LOAD_PATH`** env var — used for IPC when the skill tool result needs to be written to a temp file path for the main pi session to read.
 
 ### `internal/vault` — Session Persistence
 
@@ -888,10 +890,10 @@ If adding new security behavior, add corresponding test cases with `t.Fatal("SEC
 ### Adding a New Skill
 
 1. Create directory in vault skills: `~/.local/share/agentloop/vault/skills/my-skill/`
-2. Create `SKILL.md` with YAML frontmatter (name, description, tags) + markdown body
-3. Optionally add a `files:` manifest in the frontmatter to provide descriptions for sibling files (`.sh`, `.ts`, etc.)
-4. Skills are auto-loaded by the Registry on server start; sibling files are auto-scanned
-5. Skills are discovered at runtime via the `Find_skill` tool — the `SkillAgent` selects the best skill based on the agent's natural-language query
+2. Create `SKILL.md` with YAML frontmatter (name, description, tags) + markdown body (instructions)
+3. Optionally add supporting files (e.g. `.go`, `.ts`, templates) alongside `SKILL.md` — they are auto-scanned as `SkillFile` entries
+4. Skills are auto-loaded by the Registry on server start
+5. Skills are discovered at runtime via the `Find_skill` tool; `SkillAgent.Find()` uses LLM-based matching against `tags` to select the best skill for a query — there is no static trigger matching
 
 ### Writing Tests
 

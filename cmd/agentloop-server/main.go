@@ -89,6 +89,20 @@ func main() {
 	// Initialize session manager
 	sm := session.NewManager(cfg, v, mem, sk)
 
+	// Construct skill agent (inherits pi config if agent-specific fields are blank)
+	skillPiCfg := cfg.Pi
+	if cfg.Skills.Agent.Binary != "" {
+		skillPiCfg.Binary = cfg.Skills.Agent.Binary
+	}
+	if cfg.Skills.Agent.Provider != "" {
+		skillPiCfg.Provider = cfg.Skills.Agent.Provider
+	}
+	if cfg.Skills.Agent.Model != "" {
+		skillPiCfg.Model = cfg.Skills.Agent.Model
+	}
+	skillAgent := skills.NewSkillAgent(skillPiCfg, cfg.Security)
+	sm.SetSkillAgent(skillAgent)
+
 	// Initialize server
 	handler := server.NewHandler(sm, mem)
 	srv := server.New(expandHome(cfg.Server.SocketPath), handler)

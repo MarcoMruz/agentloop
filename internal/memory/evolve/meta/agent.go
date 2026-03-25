@@ -2,17 +2,16 @@ package meta
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"strings"
 	"sync"
 
-	"github.com/MarcoMruz/agentloop/internal/bridge"
 	"github.com/MarcoMruz/agentloop/internal/config"
 	"github.com/MarcoMruz/agentloop/internal/memory"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/metrics"
+	"github.com/MarcoMruz/agentloop/internal/pirun"
 )
 
 type MetaAgent struct {
@@ -47,7 +46,7 @@ func NewMetaAgent(
 	}
 }
 
-func (m *MetaAgent) Evolve(outcome metrics.TaskOutcome) {
+func (m *MetaAgent) Evolve(ctx context.Context, outcome metrics.TaskOutcome) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -92,7 +91,13 @@ func (m *MetaAgent) Evolve(outcome metrics.TaskOutcome) {
 		},
 	})
 
-	response, err := m.runPiSession(prompt)
+	workDir, err := os.MkdirTemp("", "memevolve-*")
+	if err != nil {
+		slog.Error("failed to create temp dir", "error", err)
+		return
+	}
+	defer os.RemoveAll(workDir)
+	response, err := pirun.RunTextSession(ctx, m.piCfg, m.secCfg, workDir, "meta-evolve", prompt)
 	if err != nil {
 		slog.Error("pi session failed", "error", err)
 		return
@@ -119,39 +124,6 @@ func (m *MetaAgent) Evolve(outcome metrics.TaskOutcome) {
 	slog.Info("evolution complete", "summary", proposal.Summary)
 }
 
-func (m *MetaAgent) runPiSession(prompt string) (string, error) {
-	ctx := context.Background()
-
-	workDir, err := os.MkdirTemp("", "memevolve-*")
-	if err != nil {
-		return "", fmt.Errorf("create temp dir: %w", err)
-	}
-	defer os.RemoveAll(workDir)
-
-	b := bridge.New(m.piCfg, m.secCfg, config.HITLConfig{})
-
-	var response strings.Builder
-	b.SetEventHandler(func(event bridge.RPCEvent) error {
-		if event.Type == "message_update" && event.AssistantMessageEvent != nil {
-			if event.AssistantMessageEvent.Type == "text_delta" {
-				response.WriteString(event.AssistantMessageEvent.Delta)
-			}
-		}
-		return nil
-	})
-
-	if err := b.Start(ctx, workDir); err != nil {
-		return "", fmt.Errorf("start pi: %w", err)
-	}
-	defer b.Stop()
-
-	if err := b.Prompt(ctx, "meta-evolve", prompt); err != nil {
-		return "", fmt.Errorf("prompt pi: %w", err)
-	}
-
-	<-b.Done()
-	return response.String(), nil
-}
 
 func (m *MetaAgent) readEvolvedSection() string {
 	if m.agentsMDPath == "" {

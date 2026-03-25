@@ -36,9 +36,11 @@ type PiBridge struct {
 	mu           sync.Mutex
 	onEvent      EventHandler
 	onHITL       HITLHandler
-	onMemoryTool MemoryToolHandler
-	done         chan struct{}
-	retrievePath string // per-session temp file for Retrieve_memory results
+	onMemoryTool  MemoryToolHandler
+	onSkillTool   SkillToolHandler
+	done          chan struct{}
+	retrievePath  string // per-session temp file for Retrieve_memory results
+	skillLoadPath string // per-session temp file for Find_skill result
 }
 
 // New creates a PiBridge but does not start it. Call Start() separately.
@@ -60,10 +62,14 @@ func (b *PiBridge) SetHITLHandler(h HITLHandler) { b.onHITL = h }
 // SetMemoryToolHandler registers the callback for memory tool interception.
 func (b *PiBridge) SetMemoryToolHandler(h MemoryToolHandler) { b.onMemoryTool = h }
 
+// SetSkillToolHandler registers the callback for Find_skill tool interception.
+func (b *PiBridge) SetSkillToolHandler(h SkillToolHandler) { b.onSkillTool = h }
+
 // Start launches the pi subprocess in RPC mode.
 func (b *PiBridge) Start(ctx context.Context, workDir string) error {
 	// Generate per-session temp file path for Retrieve_memory IPC
 	b.retrievePath = filepath.Join(os.TempDir(), fmt.Sprintf("agentloop-retrieve-%s.json", uuid.New().String()[:8]))
+	b.skillLoadPath = filepath.Join(os.TempDir(), fmt.Sprintf("agentloop-skill-load-%s.json", uuid.New().String()[:8]))
 
 	binary := b.cfg.Binary
 	if binary == "" {
@@ -105,6 +111,7 @@ func (b *PiBridge) Start(ctx context.Context, workDir string) error {
 	// SECURITY: Build sanitized environment for pi subprocess
 	env := buildSafeEnv(b.secCfg.BlockedEnvPrefixes, b.secCfg.Injection, b.hitlCfg)
 	env = append(env, "AGENTLOOP_RETRIEVE_PATH="+b.retrievePath)
+	env = append(env, "AGENTLOOP_SKILL_LOAD_PATH="+b.skillLoadPath)
 	b.cmd.Env = env
 
 	var err error
@@ -181,6 +188,9 @@ func (b *PiBridge) Stop() error {
 	if b.retrievePath != "" {
 		_ = os.Remove(b.retrievePath)
 	}
+	if b.skillLoadPath != "" {
+		_ = os.Remove(b.skillLoadPath)
+	}
 	if b.cmd != nil && b.cmd.Process != nil {
 		return b.cmd.Process.Kill()
 	}
@@ -232,6 +242,18 @@ func (b *PiBridge) readEvents() {
 			}
 			b.sendJSON(resp)
 			continue
+		}
+
+		// Skill tool interception: Find_skill is handled by the Go side — not forwarded to OnToolUse
+		if event.Type == "tool_execution_start" && event.ToolName == "Find_skill" {
+			if b.onSkillTool != nil {
+				b.onSkillTool(SkillToolEvent{
+					Tool:          "Find_skill",
+					Params:        event.Args,
+					SkillLoadPath: b.skillLoadPath,
+				})
+			}
+			continue // Do NOT forward to onEvent
 		}
 
 		// Dispatch to event handler

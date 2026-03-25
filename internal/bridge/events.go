@@ -69,6 +69,16 @@ type MemoryToolEvent struct {
 // MemoryToolHandler is called synchronously when a memory tool call is intercepted.
 type MemoryToolHandler func(event MemoryToolEvent)
 
+// SkillToolEvent is fired when the pi agent calls the Find_skill tool.
+type SkillToolEvent struct {
+	Tool          string         // "Find_skill"
+	Params        map[string]any
+	SkillLoadPath string
+}
+
+// SkillToolHandler is called when the Find_skill tool is invoked.
+type SkillToolHandler func(event SkillToolEvent)
+
 // ExtensionUIResponse is sent back to pi when a dialog extension_ui_request needs a reply.
 type ExtensionUIResponse struct {
 	Type      string `json:"type"`             // always "extension_ui_response"

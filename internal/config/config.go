@@ -102,8 +102,15 @@ type InjectionConfig struct {
 	DetectionThreshold float64  `mapstructure:"detection_threshold"`
 }
 
+type SkillAgentConfig struct {
+	Binary   string `mapstructure:"binary"`
+	Provider string `mapstructure:"provider"`
+	Model    string `mapstructure:"model"`
+}
+
 type SkillsConfig struct {
-	SkillDirs []string `mapstructure:"skill_dirs"`
+	SkillDirs []string        `mapstructure:"skill_dirs"`
+	Agent     SkillAgentConfig `mapstructure:"agent"`
 }
 
 type LoggingConfig struct {
@@ -289,7 +296,10 @@ func Defaults() *Config {
 				},
 			},
 		},
-		Skills:  SkillsConfig{SkillDirs: []string{"~/.local/share/agentloop/vault/skills"}},
+		Skills: SkillsConfig{
+			SkillDirs: []string{"~/.local/share/agentloop/vault/skills"},
+			Agent:     SkillAgentConfig{}, // empty = inherit from pi.binary / pi.provider / pi.model at runtime
+		},
 		Logging: LoggingConfig{Level: "info"},
 		Evolution: EvolutionConfig{
 			Enabled:            true,

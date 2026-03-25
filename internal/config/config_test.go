@@ -277,3 +277,17 @@ func TestDefaultConfigPathNotEmpty(t *testing.T) {
 		t.Fatal("DefaultConfigPath should not be empty")
 	}
 }
+
+func TestSkillAgentConfigDefaults(t *testing.T) {
+	cfg := Defaults()
+	// Agent fields should inherit from Pi by default (empty = inherit)
+	if cfg.Skills.Agent.Binary != "" {
+		t.Errorf("expected empty binary (inherit from pi), got %q", cfg.Skills.Agent.Binary)
+	}
+	if cfg.Skills.Agent.Provider != "" {
+		t.Errorf("expected empty provider (inherit from pi), got %q", cfg.Skills.Agent.Provider)
+	}
+	if cfg.Skills.Agent.Model != "" {
+		t.Errorf("expected empty model (inherit from pi), got %q", cfg.Skills.Agent.Model)
+	}
+}

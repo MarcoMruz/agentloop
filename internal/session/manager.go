@@ -56,6 +56,7 @@ type Manager struct {
 	vault    *vault.Vault
 	memory   *memory.Engine
 	skills   *skills.Registry
+	skillAgent *skills.SkillAgent
 	collector *metrics.Collector
 	pipeline  *evolve.PipelineHolder
 	metaAgent *meta.MetaAgent
@@ -94,6 +95,11 @@ func (m *Manager) SetMetaAgent(ma *meta.MetaAgent) {
 	m.metaAgent = ma
 }
 
+// SetSkillAgent sets the SkillAgent for LLM-driven skill selection.
+func (m *Manager) SetSkillAgent(sa *skills.SkillAgent) {
+	m.skillAgent = sa
+}
+
 func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session, error) {
 	m.mu.Lock()
 
@@ -122,7 +128,7 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 		defer m.cleanupSession(sess)
 
 		loader := agent.NewAgentLoader(m.vault.Path())
-		orch := agent.NewOrchestrator(loader, m.memory, m.skills, m.pipeline, m.collector, m.metaAgent, m.secCfg, m.hitlCfg)
+		orch := agent.NewOrchestrator(loader, m.memory, m.pipeline, m.collector, m.metaAgent, m.secCfg, m.hitlCfg)
 		octx := agent.NewOrchestratorCtx(sess.ID, req.UserID, req.WorkDir, req.Source, sess.ConversationContextID, m.orchCfg)
 
 		orchResult := orch.Run(ctx, octx, req.Text, sess, agent.Callbacks{
@@ -253,6 +259,34 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 						}
 					}
 				}()
+			},
+			OnSkillTool: func(ev bridge.SkillToolEvent) {
+				if m.skillAgent == nil {
+					writeSkillError(ev.SkillLoadPath, "skill agent not configured")
+					return
+				}
+				query, _ := ev.Params["query"].(string)
+				if query == "" {
+					writeSkillError(ev.SkillLoadPath, "missing query param")
+					return
+				}
+				catalog := m.skills.Catalog()
+				name, err := m.skillAgent.Find(ctx, query, catalog)
+				if err != nil || name == "" {
+					writeSkillError(ev.SkillLoadPath, "no matching skill found")
+					return
+				}
+				skill, err := m.skills.Get(name)
+				if err != nil {
+					writeSkillError(ev.SkillLoadPath, "skill not found: "+name)
+					return
+				}
+				data, err := json.Marshal(skill)
+				if err != nil {
+					writeSkillError(ev.SkillLoadPath, "failed to marshal skill")
+					return
+				}
+				_ = os.WriteFile(ev.SkillLoadPath, data, 0600)
 			},
 		})
 
@@ -387,4 +421,9 @@ func (m *Manager) evictOldestLRU() string {
 func truncate(s string, n int) string {
 	if len(s) <= n { return s }
 	return s[:n] + "...[truncated]"
+}
+
+func writeSkillError(path string, msg string) {
+	data, _ := json.Marshal(map[string]string{"error": msg})
+	_ = os.WriteFile(path, data, 0600)
 }

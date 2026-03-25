@@ -52,6 +52,7 @@ type Callbacks struct {
 	OnDone        func(output string, stats RunStats)
 	OnError       func(msg string)
 	OnMemoryTool  bridge.MemoryToolHandler
+	OnSkillTool   bridge.SkillToolHandler
 }
 
 // SessionInterface is the subset of Session needed by the agent core.
@@ -257,15 +258,14 @@ func (c *Core) Run(ctx context.Context, userId string, task string, workDir stri
 
 	slog.Debug("Core.Run starting", "task_len", len(task), "userId", userId)
 
-	// Build the full prompt: memory context + skills + task
-	skillNames := c.pb.DetectSkills(task)
+	// Build the full prompt: memory context + task
 	conversationContextID := sess.GetConversationContextID()
-	fullPrompt, err := c.pb.Build(userId, task, skillNames, conversationContextID)
+	fullPrompt, err := c.pb.Build(userId, task, conversationContextID)
 	if err != nil {
 		slog.Warn("Core.Run: prompt build error, falling back to raw task", "err", err)
 		fullPrompt = task
 	}
-	slog.Debug("Core.Run after buildPrompt", "prompt_len", len(fullPrompt), "skills", skillNames)
+	slog.Debug("Core.Run after buildPrompt", "prompt_len", len(fullPrompt))
 
 	// Create pi bridge
 	b := bridge.New(c.piCfg, c.secCfg, c.hitlCfg)
@@ -374,6 +374,10 @@ func (c *Core) Run(ctx context.Context, userId string, task string, workDir stri
 
 	if c.cb.OnMemoryTool != nil {
 		b.SetMemoryToolHandler(c.cb.OnMemoryTool)
+	}
+
+	if c.cb.OnSkillTool != nil {
+		b.SetSkillToolHandler(c.cb.OnSkillTool)
 	}
 
 	// Start pi

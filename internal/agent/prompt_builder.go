@@ -73,9 +73,9 @@ func (pb *PromptBuilder) DetectSkills(task string) []string {
 	slog.Debug("prompt_builder: DetectSkills scanning", "availableSkills", len(allSkills))
 
 	for _, sk := range allSkills {
-		for _, trigger := range sk.Triggers {
-			if strings.Contains(lower, strings.ToLower(trigger)) {
-				slog.Debug("prompt_builder: skill trigger matched", "skill", sk.Name, "trigger", trigger)
+		for _, tag := range sk.Tags {
+			if strings.Contains(lower, strings.ToLower(tag)) {
+				slog.Debug("prompt_builder: skill tag matched", "skill", sk.Name, "tag", tag)
 				matched = append(matched, sk.Name)
 				break
 			}

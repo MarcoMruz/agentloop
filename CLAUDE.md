@@ -184,10 +184,17 @@ agentloop/
 │   │
 │   ├── memory/
 │   │   ├── engine.go               # Memory engine: orchestrates all memory ops
+│   │   ├── scheduler.go            # MemScheduler: Minimal/Standard/Detailed routing
+│   │   ├── index.go                # Conversation indexing, ExtractKeywords/Topics
 │   │   ├── profile.go              # Per-user profile (preferences, facts, patterns)
 │   │   ├── conversation.go         # Conversation log (per-user, per-day)
-│   │   ├── compaction.go           # Compaction strategies (rolling, facts, topics)
+│   │   ├── compaction.go           # Compaction strategies + LLM delta extraction
 │   │   ├── cache.go                # Prompt cache (stable prefix optimization)
+│   │   ├── notes/                  # Zettelkasten atomic note store
+│   │   │   ├── store.go            # AtomicNote type + NoteStore interface (test-only)
+│   │   │   └── sqlite.go           # SQLiteNoteStore (production, per-user DBs)
+│   │   ├── llm/                    # Background LLM operations for memory
+│   │   │   └── client.go           # LLMClient interface, PiCompletionClient, NoopClient
 │   │   └── evolve/                 # MemEvolve: self-evolving memory pipeline
 │   │       ├── interfaces.go       # Encoder, Storer, Retriever, Manager interfaces
 │   │       ├── pipeline.go         # Pipeline orchestrator + atomic hot-swap
@@ -241,7 +248,8 @@ agentloop/
 │
 ├── extensions/                     # Pi extensions (loaded by pi subprocess)
 │   ├── security-policy.ts
-│   └── docker-guard.ts
+│   ├── docker-guard.ts
+│   └── memory-tools.ts             # Add_memory, Update_memory, Delete_memory, Retrieve_memory tools
 │
 ├── agents-md/
 │   └── AGENTS.md                   # Instructions pi loads for agent behavior
@@ -294,6 +302,7 @@ go test ./...
 # Run specific package tests
 go test ./internal/bridge/... -v
 go test ./internal/security/... -v
+go test ./internal/memory/... -v
 go test ./internal/memory/evolve/... -v
 
 # Security tests MUST always pass — these are mandatory
@@ -336,6 +345,30 @@ go test ./internal/bridge/... -v
 | `TestProposalParsingInvalid` | `internal/memory/evolve/meta/applier_test.go` | Invalid JSON proposal returns error |
 | `TestEvolutionLogAppend` | `internal/memory/evolve/version/version_test.go` | Log entries appended to JSONL |
 | `TestSnapshotContainsAllFiles` | `internal/memory/evolve/version/version_test.go` | Snapshot copies all tracked files |
+| `TestScheduleMinimal` | `internal/memory/scheduler_test.go` | Short task routes to Minimal context level |
+| `TestScheduleStandard` | `internal/memory/scheduler_test.go` | Medium task routes to Standard context level |
+| `TestScheduleDetailed` | `internal/memory/scheduler_test.go` | Long task routes to Detailed context level |
+| `TestScheduleComplexityKeywords` | `internal/memory/scheduler_test.go` | Complexity keywords force Detailed regardless of word count |
+| `TestInMemoryNoteStoreConformance` | `internal/memory/notes/store_test.go` | InMemoryNoteStore basic CRUD correctness |
+| `TestAtomicNoteTimestamps` | `internal/memory/notes/store_test.go` | Note timestamps set on Add, preserved on Get |
+| `TestListByUser` | `internal/memory/notes/store_test.go` | ListByUser returns only notes for that user |
+| `TestSQLiteNoteStoreConformance` | `internal/memory/notes/store_test.go` | SQLiteNoteStore matches NoteStore interface contract |
+| `TestSQLiteNoteStoreVectorSearch` | `internal/memory/notes/store_test.go` | Vector search returns cosine-nearest notes |
+| `TestSQLiteNoteStoreNoEmbeddingSkipped` | `internal/memory/notes/store_test.go` | SearchByVector returns nil (no error) when embeddingDim=0 |
+| `TestNoopClientEmbed` | `internal/memory/llm/client_test.go` | NoopClient.Embed returns nil slice, no error |
+| `TestNoopClientComplete` | `internal/memory/llm/client_test.go` | NoopClient.Complete returns empty string, no error |
+| `TestRecordInteraction_TagsContextID` | `internal/memory/engine_test.go` | Interaction tagged with conversationContextID |
+| `TestRecordInteraction_EmptyContextID_GlobalBehavior` | `internal/memory/engine_test.go` | Empty contextID falls through to global conversation |
+| `TestRecordInteraction_InvalidatesCacheForContext` | `internal/memory/engine_test.go` | Cache invalidated after RecordInteraction |
+| `TestGetContextForUserAndConversationContext_IsolatesThread` | `internal/memory/engine_test.go` | Thread context returns only that thread's history |
+| `TestGetContextForUserAndConversationContext_EmptyContextID_FallsBack` | `internal/memory/engine_test.go` | Empty contextID falls back to profile-only context |
+| `TestAddNoteLinksRelatedNotes` | `internal/memory/engine_test.go` | AddNote auto-links top-3 keyword-related notes bidirectionally |
+| `TestExtractDeltaWithPrefix` | `internal/memory/compaction_delta_test.go` | LLM response with "DELTA: " prefix returns extracted delta |
+| `TestExtractDeltaNoPrefix` | `internal/memory/compaction_delta_test.go` | LLM response without prefix returns empty string |
+| `TestExtractDeltaNilClient` | `internal/memory/compaction_delta_test.go` | Nil LLM client returns empty string (no panic) |
+| `TestExtractDeltaEmptyResponse` | `internal/memory/compaction_delta_test.go` | Empty LLM response returns empty string |
+| `TestThreadIsolation_FullRoundTrip` | `internal/memory/integration_test.go` | Full record→retrieve round-trip preserves thread isolation |
+| `TestThreadIsolation_NewThread_GetsOnlyProfile` | `internal/memory/integration_test.go` | New thread context contains only profile, no history bleed |
 
 ### Test Conventions
 
@@ -359,6 +392,8 @@ import "github.com/user/agentloop/internal/config"
 import "github.com/user/agentloop/internal/errors"
 import "github.com/user/agentloop/internal/logging"
 import "github.com/user/agentloop/internal/memory"
+import "github.com/user/agentloop/internal/memory/llm"
+import "github.com/user/agentloop/internal/memory/notes"
 import "github.com/user/agentloop/internal/memory/evolve"
 import "github.com/user/agentloop/internal/memory/evolve/baseline"
 import "github.com/user/agentloop/internal/memory/evolve/metrics"
@@ -373,9 +408,11 @@ import "github.com/user/agentloop/internal/vault"
 
 **Direct dependencies (go.mod):**
 ```
-github.com/google/uuid   v1.6.0    # UUID generation for session/client IDs
-github.com/spf13/viper   v1.21.0   # Config file parsing + env vars
-gopkg.in/yaml.v3         v3.0.1    # YAML marshal/unmarshal
+github.com/google/uuid                      v1.6.0    # UUID generation for session/client IDs
+github.com/spf13/viper                      v1.21.0   # Config file parsing + env vars
+gopkg.in/yaml.v3                            v3.0.1    # YAML marshal/unmarshal
+github.com/mattn/go-sqlite3                 v1.14.37  # SQLite driver (requires CGo)
+github.com/asg017/sqlite-vec-go-bindings    v0.1.6    # sqlite-vec vector search extension
 ```
 
 Do NOT add dependencies without explicit approval. The project intentionally has a minimal dependency footprint.
@@ -409,7 +446,8 @@ Do NOT add dependencies without explicit approval. The project intentionally has
 | `server` | `ServerConfig` | Unix socket path |
 | `pi` | `PiConfig` | Pi binary path, provider, model, extensions dir, extra args |
 | `vault` | `VaultConfig` | Vault storage path |
-| `memory` | `MemoryConfig` | Profile entries limit, conversation retention, compaction settings, cache TTL |
+| `memory` | `MemoryConfig` | Profile entries limit, conversation retention, compaction settings, cache TTL, `embedding_dims` for vector search |
+| `memory.agent` | `MemoryAgentConfig` | Background LLM for delta extraction: `enabled`, `binary`, `provider`, `model` (use a cheap model like Haiku) |
 | `sessions` | `SessionConfig` | Max concurrent, max per user, timeout, token budget, tool call limit, stuck threshold, LRU eviction |
 | `hitl` | `HITLConfig` | Always-pause tools, timeout, timeout action |
 | `security` | `SecurityConfig` | Allowed paths, blocked env prefixes, blocked CIDRs, docker rules, **injection protection** |
@@ -510,22 +548,41 @@ Note: the prompt field is `"message"`, **not** `"text"`. Using `"text"` silently
 
 All memory, caching, compaction, and context management lives here. No client ever manages memory.
 
-**`Engine`** — orchestrates profile store, conversation store, prompt cache, and compactor. `GetContextForUser()` builds the full memory context for prompts. `RecordInteraction()` saves conversation turns and updates profiles. When a `Pipeline` is set via `SetPipeline()`, `Engine` delegates encoding, storing, retrieving, and compacting to it instead of the built-in implementations.
+**`Engine`** — orchestrates profile store, conversation store, notes store, prompt cache, and compactor. Key methods:
+- `GetContextForUser(userId)` — legacy, no task context; uses TTL cache (5-min).
+- `GetContextForUserWithTask(userId, task)` — primary retrieval path. Calls `Schedule(task)` to pick context depth (Minimal/Standard/Detailed), then retrieves notes via MemEvolve pipeline or keyword+topic fallback. Falls back to indexing-based retrieval if pipeline errors.
+- `GetContextForUserAndConversationContext(userId, contextID)` — thread-scoped retrieval. Returns profile + only history from that thread. Use this for Slack-style threaded conversations.
+- `RecordInteraction(userId, userMsg, agentReply, toolsUsed, conversationContextID)` — appends to conversation log, updates profile heuristically, and **asynchronously** extracts a delta atomic note via LLM if `LLMClient` is set.
+- `AddNote(note)` — saves to `SQLiteNoteStore` and **auto-links to top-3 keyword-related existing notes bidirectionally**. Invalidates user cache. Always route note saves through `Engine.AddNote()`, never call the note store directly.
+- `UpdateNote(note)` / `DeleteNote(userID, noteID)` — both invalidate user cache.
+- `SetPipeline(p)` / `SetNoteStore(s)` / `SetLLMClient(c)` — injection methods for wiring MemEvolve pipeline, `SQLiteNoteStore`, and background LLM client.
+
+**`MemScheduler`** (`scheduler.go`) — routes a task string to a `ContextLevel`:
+- `Minimal` (≤3 words, no complexity keyword) — profile + top-3 notes only.
+- `Standard` (default) — profile + moderate history.
+- `Detailed` (>25 words OR contains complexity keyword) — full context.
+- Complexity keywords: `refactor`, `architect`, `redesign`, `migrate`, `integrate`, `security`, `performance`, `debug`, `analyse`, `analyze`.
+- Deterministic: same input always produces same level.
 
 **`ProfileStore`** — per-user YAML profiles in `vault/memory/users/`. Tracks communication style, preferences, frequent projects, fact sheet, recent topics.
 
-**`ConversationStore`** — per-user, per-day markdown conversation logs in `vault/memory/contexts/`. Legacy store; superseded by `SQLiteNoteStore` in the MemEvolve pipeline.
+**`ConversationStore`** — per-user, per-day markdown conversation logs in `vault/memory/contexts/`. Legacy; superseded by `SQLiteNoteStore` for semantic knowledge. Still used for verbatim turn history + sidecar indexing.
+
+**Conversation index** (`index.go`) — JSON sidecar alongside each daily markdown file. Enables fast keyword/topic scoring without parsing full history. `ExtractKeywords(content)` (up to 15, filters stopwords) and `ExtractTopics(content)` (stems against 40-item domain taxonomy) are exported; used by MemEvolve baseline implementations.
 
 **`internal/memory/notes/`** — Zettelkasten atomic note store.
-- `AtomicNote` — one idea per note: `{ID, UserID, Content, Keywords, Tags, Description, Embedding, Connections, CreatedAt, UpdatedAt}`. `Tags` maps to topic taxonomy. `Connections` holds IDs of related notes.
-- `SQLiteNoteStore` (`sqlite.go`) — **production store**. Per-user SQLite databases at `vault/memory/notes/{userID}.db`. Keyword search via `json_each()`. Vector search via `sqlite-vec` `vec0` virtual table when `embeddingDim > 0`. Always use `*SQLiteNoteStore` directly in production code.
-- `NoteStore` interface (`store.go`) — **test-only**. `InMemoryNoteStore` implements it for unit tests. Never depend on `NoteStore` in production code.
+- `AtomicNote` — one idea per note: `{ID, UserID, Content, Keywords, Tags, Description, Embedding, Connections, CreatedAt, UpdatedAt}`. `Tags` maps to topic taxonomy. `Connections` holds IDs of related notes (auto-linked by Engine).
+- `SQLiteNoteStore` (`sqlite.go`) — **production store**. Per-user SQLite databases at `vault/memory/notes/{userID}.db`. Keyword search via `json_each()`. Vector search via `sqlite-vec` `vec0` virtual table when `embeddingDim > 0`. Lazy DB opening per user; migration idempotent. `SearchByVector` returns nil (no error) when `embeddingDim=0` or embedding length mismatches. Always use `*SQLiteNoteStore` directly in production code.
+- `NoteStore` interface (`store.go`) — **test-only**. `InMemoryNoteStore` implements it for unit tests. Never use `NoteStore` in production code.
 
-**`Compactor`** — 3 strategies (rolling, facts, topics), all heuristic-based, no LLM calls.
+**`internal/memory/llm/`** — background LLM operations for async memory work.
+- `LLMClient` interface: `Embed(text) ([]float32, error)` + `Complete(prompt) (string, error)`. `Embed` always returns nil (pi subprocesses don't expose embedding APIs). Use `NoopClient` when `memory.agent.enabled = false`.
+- `PiCompletionClient` — spawns a short-lived pi subprocess (120s timeout) with the configured cheap model (e.g. Haiku). Used for delta extraction in `RecordInteraction()`. Configured via `memory.agent.*` config section.
+- Constructor: `NewPiCompletionClient(piCfg config.PiConfig)`.
+
+**`Compactor`** (`compaction.go`) — 3 deterministic strategies (rolling, facts, topics). `extractDelta()` calls `LLMClient.Complete()` with a minimal prompt, looks for `"DELTA: "` prefix, returns empty string on noop or nil client. Delta extraction runs asynchronously in `RecordInteraction()`.
 
 **`PromptCache`** — in-memory TTL cache for assembled context strings.
-
-**`ExtractKeywords` / `ExtractTopics`** — exported from `index.go`; used by MemEvolve baseline implementations.
 
 ### `internal/memory/evolve` — MemEvolve Self-Evolving Pipeline
 
@@ -584,7 +641,9 @@ Skills are on-demand instruction sets loaded from the vault. Each skill director
 │   └── YYYY-MM-DD-sess-{uuid8}.md
 ├── memory/
 │   ├── users/    (per-user profiles, YAML)
-│   ├── contexts/ (conversation summaries, Markdown)
+│   ├── contexts/ (conversation summaries, Markdown + JSON sidecar index)
+│   ├── notes/    (per-user SQLite databases for atomic notes + vector search)
+│   │   └── {userId}.db
 │   ├── cache/    (prompt cache, reserved)
 │   └── evolved/  (MemEvolve artifacts)
 │       ├── pipeline-config.yaml          (active evolved config)
@@ -690,7 +749,8 @@ Extensions are TypeScript files in `extensions/` that pi loads via the `-e` flag
 |-----------|------|---------|
 | `security-policy.ts` | Permission gate | Blocks dangerous bash patterns, validates file write paths |
 | `docker-guard.ts` | Permission gate | Validates docker subcommands + volume mounts |
-| `prompt-injection-guard.ts` | Permission gate | **NEW:** Detects prompt injection attempts from risky sources |
+| `prompt-injection-guard.ts` | Permission gate | Detects prompt injection attempts from risky sources |
+| `memory-tools.ts` | Custom tools | Exposes `Add_memory`, `Update_memory`, `Delete_memory`, `Retrieve_memory` tools to pi |
 
 ### Extension Environment Variables
 
@@ -706,6 +766,7 @@ Extensions are TypeScript files in `extensions/` that pi loads via the `-e` flag
 | `AGENTLOOP_MAX_CONTENT_LENGTH` | **prompt-injection-guard.ts** | **Number** | **50000** |
 | `AGENTLOOP_APPROVAL_TIER` | **prompt-injection-guard.ts** | **"owner"/"admin"/"auto-deny"** | **"owner"** |
 | `AGENTLOOP_SANITIZE_MEMORY` | **prompt-injection-guard.ts** | **"true"/"false"** | **true** |
+| `AGENTLOOP_RETRIEVE_PATH` | memory-tools.ts | Absolute path to temp file | Set by server on session start |
 
 ### Adding a New Extension
 
@@ -926,3 +987,13 @@ if errors.IsUserAbort(err) { /* clean exit */ }
 23. **Vector search requires a pre-computed embedding** — `BaselineRetriever` calls `SearchByVector` only when `RetrievalQuery.QueryEmbedding` is non-nil. The retriever does not call any embedding API itself. If `QueryEmbedding` is nil, only keyword search runs; this is correct and expected behavior when no embedding provider is wired.
 24. **`Applier.Apply()` requires `userID`** — `NoteProposals` are stored per-user via `Engine.AddNote()`. Passing an empty string silently produces notes with no owner. Always pass `outcome.UserID`. Passing a nil engine silently skips all note proposals.
 25. **MemEvolve only creates notes, never updates or deletes them** — `NoteProposal` has no `action` field. Notes written by evolution are immutable knowledge artifacts; the agent accumulates them across evolutions.
+26. **Always route note saves through `Engine.AddNote()`** — never call `SQLiteNoteStore.Add()` directly from outside the engine. `Engine.AddNote()` triggers bidirectional auto-linking; bypassing it creates orphaned notes.
+27. **`MemScheduler.Schedule()` is deterministic** — caches context at key `"ctx:" + userId + ":" + taskCacheKey(task)`. The cache key is based on normalized task text; different whitespace or casing may produce different keys.
+28. **`GetContextForUserWithTask()` vs `GetContextForUser()`** — use `GetContextForUserWithTask` in all new code; `GetContextForUser` is legacy and lacks task-aware depth selection. The task-scoped method goes through the scheduler, pipeline, and note search.
+29. **`GetContextForUserAndConversationContext()` for threaded conversations** — when a task is part of a conversation thread (e.g. Slack thread), pass the thread/channel ID as `contextID`. History from other threads is excluded; only that thread's turns are returned.
+30. **`PiCompletionClient.Embed()` always returns nil** — pi subprocesses have no embedding API. For vector search to work, you must wire in an external embedding provider. Until then, `QueryEmbedding` will always be nil and only keyword search runs.
+31. **`memory.agent.*` config is for delta extraction only** — this is a separate, cheap-model pi subprocess spawned asynchronously per interaction. It is not the main agent. Set `enabled: false` to use `NoopClient` and disable delta extraction entirely.
+32. **`Retrieve_memory` tool uses temp-file IPC** — the server writes retrieved notes to the path in `AGENTLOOP_RETRIEVE_PATH` before the session starts; the tool reads synchronously. This temp file is scoped to the session; do not share across sessions.
+33. **Memory tool execution stubs in `memory-tools.ts`** — `Add_memory`, `Update_memory`, `Delete_memory` `execute()` functions return success immediately; the Go bridge intercepts `tool_execution_start` events by tool name to perform actual persistence. The TypeScript side only provides the tool schema.
+34. **`SQLiteNoteStore.Get(id)` is O(n) in open databases** — it searches all open user DBs. Use user-scoped methods (`SearchByKeywords`, `ListByUser`) where possible; avoid `Get()` in hot paths.
+35. **Delta extraction fails silently** — if `LLMClient.Complete()` returns an error or the response lacks the `"DELTA: "` prefix, `RecordInteraction()` continues without saving a delta note. This is intentional; delta extraction is best-effort enrichment.

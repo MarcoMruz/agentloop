@@ -122,7 +122,7 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 		defer m.cleanupSession(sess)
 
 		loader := agent.NewAgentLoader(m.vault.Path())
-		orch := agent.NewOrchestrator(loader, m.memory, m.skills, m.pipeline, m.collector, m.metaAgent, m.secCfg, m.hitlCfg)
+		orch := agent.NewOrchestrator(loader, m.memory, m.pipeline, m.collector, m.metaAgent, m.secCfg, m.hitlCfg)
 		octx := agent.NewOrchestratorCtx(sess.ID, req.UserID, req.WorkDir, req.Source, sess.ConversationContextID, m.orchCfg)
 
 		orchResult := orch.Run(ctx, octx, req.Text, sess, agent.Callbacks{

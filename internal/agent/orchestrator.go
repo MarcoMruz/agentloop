@@ -14,7 +14,6 @@ import (
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/metrics"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/meta"
-	"github.com/MarcoMruz/agentloop/internal/skills"
 	"github.com/google/uuid"
 )
 
@@ -120,7 +119,6 @@ func (r *OrchestratorResult) CollectToolsUsed() []string {
 type Orchestrator struct {
 	loader       *AgentLoader
 	memoryEngine *memory.Engine
-	skillsReg    *skills.Registry
 	pipeline     *evolve.PipelineHolder
 	collector    *metrics.Collector
 	metaAgent    *meta.MetaAgent
@@ -132,7 +130,6 @@ type Orchestrator struct {
 func NewOrchestrator(
 	loader *AgentLoader,
 	memEngine *memory.Engine,
-	skillsReg *skills.Registry,
 	pipeline *evolve.PipelineHolder,
 	collector *metrics.Collector,
 	metaAgent *meta.MetaAgent,
@@ -142,7 +139,6 @@ func NewOrchestrator(
 	return &Orchestrator{
 		loader:       loader,
 		memoryEngine: memEngine,
-		skillsReg:    skillsReg,
 		pipeline:     pipeline,
 		collector:    collector,
 		metaAgent:    metaAgent,
@@ -179,7 +175,7 @@ func (o *Orchestrator) Run(ctx context.Context, octx OrchestratorCtx, task strin
 	// Single mode: delegate to Core.Run
 	if plan.Mode == "single" {
 		slog.Info("planner chose single mode", "orchestration_id", octx.OrchestrationID)
-		pb := NewPromptBuilder(o.memoryEngine, o.skillsReg)
+		pb := NewPromptBuilder(o.memoryEngine)
 		core := New(octx.Config.Worker, o.secCfg, o.hitlCfg, pb, cb)
 		result := core.Run(ctx, octx.UserID, task, octx.WorkDir, sess)
 		return &OrchestratorResult{
@@ -389,7 +385,7 @@ func (o *Orchestrator) runWorker(ctx context.Context, octx OrchestratorCtx, step
 		OnMemoryTool: cb.OnMemoryTool,
 	}
 
-	pb := NewPromptBuilder(o.memoryEngine, o.skillsReg)
+	pb := NewPromptBuilder(o.memoryEngine)
 	core := New(octx.Config.Worker, o.secCfg, o.hitlCfg, pb, workerCb)
 	result := core.Run(ctx, octx.UserID, prompt, octx.WorkDir, sess)
 

@@ -258,15 +258,14 @@ func (c *Core) Run(ctx context.Context, userId string, task string, workDir stri
 
 	slog.Debug("Core.Run starting", "task_len", len(task), "userId", userId)
 
-	// Build the full prompt: memory context + skills + task
-	skillNames := c.pb.DetectSkills(task)
+	// Build the full prompt: memory context + task
 	conversationContextID := sess.GetConversationContextID()
-	fullPrompt, err := c.pb.Build(userId, task, skillNames, conversationContextID)
+	fullPrompt, err := c.pb.Build(userId, task, conversationContextID)
 	if err != nil {
 		slog.Warn("Core.Run: prompt build error, falling back to raw task", "err", err)
 		fullPrompt = task
 	}
-	slog.Debug("Core.Run after buildPrompt", "prompt_len", len(fullPrompt), "skills", skillNames)
+	slog.Debug("Core.Run after buildPrompt", "prompt_len", len(fullPrompt))
 
 	// Create pi bridge
 	b := bridge.New(c.piCfg, c.secCfg, c.hitlCfg)

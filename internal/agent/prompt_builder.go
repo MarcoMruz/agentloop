@@ -6,26 +6,23 @@ import (
 	"strings"
 
 	"github.com/MarcoMruz/agentloop/internal/memory"
-	"github.com/MarcoMruz/agentloop/internal/skills"
 )
 
 // PromptBuilder constructs the full prompt sent to pi.
 // It orders sections for maximum prompt cache efficiency:
 //  1. User profile (rarely changes → cached)
-//  2. Active skills (changes per-task, but often repeated)
-//  3. Compacted conversation history (changes slowly)
-//  4. Current task (always new)
+//  2. Compacted conversation history (changes slowly)
+//  3. Current task (always new)
 type PromptBuilder struct {
-	mem    *memory.Engine
-	skills *skills.Registry
+	mem *memory.Engine
 }
 
-func NewPromptBuilder(mem *memory.Engine, sk *skills.Registry) *PromptBuilder {
-	return &PromptBuilder{mem: mem, skills: sk}
+func NewPromptBuilder(mem *memory.Engine) *PromptBuilder {
+	return &PromptBuilder{mem: mem}
 }
 
 // Build constructs the full prompt for a user task.
-func (pb *PromptBuilder) Build(userId string, task string, skillNames []string, conversationContextID string) (string, error) {
+func (pb *PromptBuilder) Build(userId string, task string, conversationContextID string) (string, error) {
 	var sections []string
 
 	// Section 1: Memory context. For Slack threads, scope to the thread context.
@@ -46,42 +43,9 @@ func (pb *PromptBuilder) Build(userId string, task string, skillNames []string, 
 		slog.Debug("prompt_builder: memory context empty, skipping", "userId", userId)
 	}
 
-	// Section 2: Skills (loaded on demand)
-	for _, name := range skillNames {
-		skill, err := pb.skills.Get(name)
-		if err != nil {
-			slog.Warn("prompt_builder: skill not found", "skill", name, "err", err)
-			continue
-		}
-		sections = append(sections, fmt.Sprintf("<skill name=%q>\n%s\n</skill>", name, skill.Instructions))
-	}
-
-	// Section 3: Task
+	// Section 2: Task
 	sections = append(sections, task)
 	prompt := strings.Join(sections, "\n\n")
 
 	return prompt, nil
-}
-
-// DetectSkills analyzes the task text and returns relevant skill names.
-// Simple keyword matching — no LLM call needed.
-func (pb *PromptBuilder) DetectSkills(task string) []string {
-	lower := strings.ToLower(task)
-	var matched []string
-
-	allSkills := pb.skills.List()
-	slog.Debug("prompt_builder: DetectSkills scanning", "availableSkills", len(allSkills))
-
-	for _, sk := range allSkills {
-		for _, tag := range sk.Tags {
-			if strings.Contains(lower, strings.ToLower(tag)) {
-				slog.Debug("prompt_builder: skill tag matched", "skill", sk.Name, "tag", tag)
-				matched = append(matched, sk.Name)
-				break
-			}
-		}
-	}
-
-	slog.Debug("prompt_builder: DetectSkills done", "matched", matched)
-	return matched
 }

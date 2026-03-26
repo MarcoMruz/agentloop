@@ -1,5 +1,7 @@
 package bridge
 
+import "encoding/json"
+
 // RPCCommand is sent from Go to pi via stdin.
 type RPCCommand struct {
 	Type              string `json:"type"`
@@ -45,11 +47,11 @@ type RPCEvent struct {
 	FinalError string `json:"finalError,omitempty"`
 
 	// extension_ui_request (HITL gate uses these)
-	Method      string   `json:"method,omitempty"`
-	Title       string   `json:"title,omitempty"`
-	UIMessage   string   `json:"message,omitempty"` // body text from ctx.ui.confirm(title, message)
-	Options     []string `json:"options,omitempty"`
-	Timeout     int      `json:"timeout,omitempty"`
+	Method    string          `json:"method,omitempty"`
+	Title     string          `json:"title,omitempty"`
+	UIMessage json.RawMessage `json:"message,omitempty"` // body text (string) from ctx.ui.confirm(title, message); object in other event types
+	Options   []string        `json:"options,omitempty"`
+	Timeout   int             `json:"timeout,omitempty"`
 }
 
 // MemoryToolEvent is constructed when the bridge intercepts a tool_execution_start
@@ -80,6 +82,21 @@ type SkillToolEvent struct {
 type SkillToolHandler func(event SkillToolEvent)
 
 // ExtensionUIResponse is sent back to pi when a dialog extension_ui_request needs a reply.
+// UIMessageString extracts UIMessage as a plain string.
+// For extension_ui_request events the field is a JSON-encoded string; for
+// other event types (message_start, message_end, turn_end …) it is a JSON
+// object — this returns "" for those so callers never see a parse error.
+func (e RPCEvent) UIMessageString() string {
+	if len(e.UIMessage) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(e.UIMessage, &s); err != nil {
+		return ""
+	}
+	return s
+}
+
 type ExtensionUIResponse struct {
 	Type      string `json:"type"`             // always "extension_ui_response"
 	ID        string `json:"id"`               // matches the request ID

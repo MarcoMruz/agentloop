@@ -83,6 +83,9 @@ func (b *PiBridge) Start(ctx context.Context, workDir string) error {
 	if b.cfg.Model != "" {
 		args = append(args, "--model", b.cfg.Model)
 	}
+	if b.cfg.NoSkills {
+		args = append(args, "--no-skills")
+	}
 
 	// Load AgentLoop extensions
 	extDir := b.cfg.ExtensionsDir
@@ -112,6 +115,9 @@ func (b *PiBridge) Start(ctx context.Context, workDir string) error {
 	env := buildSafeEnv(b.secCfg.BlockedEnvPrefixes, b.secCfg.Injection, b.hitlCfg)
 	env = append(env, "AGENTLOOP_RETRIEVE_PATH="+b.retrievePath)
 	env = append(env, "AGENTLOOP_SKILL_LOAD_PATH="+b.skillLoadPath)
+	if b.cfg.VaultPath != "" {
+		env = append(env, "AGENTLOOP_VAULT_PATH="+b.cfg.VaultPath)
+	}
 	b.cmd.Env = env
 
 	var err error

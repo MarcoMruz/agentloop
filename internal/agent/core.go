@@ -240,7 +240,8 @@ func (c *Core) enrichHITLDetails(details *HITLRequestDetails, event bridge.RPCEv
 	details.Reason = buildReason(event.Title, details.ToolCategory, details.Rule)
 
 	// Extract file path from extension message body
-	details.FilePath = extractFilePath(event.UIMessage)
+	uiMsg := event.UIMessageString()
+	details.FilePath = extractFilePath(uiMsg)
 
 	// For file tools, include whitelisted paths from security config
 	if details.ToolCategory == "file" {
@@ -248,7 +249,7 @@ func (c *Core) enrichHITLDetails(details *HITLRequestDetails, event bridge.RPCEv
 	}
 
 	// Build structured input from available data
-	details.StructuredInput = buildStructuredInput(event.Title, event.UIMessage, details.FilePath)
+	details.StructuredInput = buildStructuredInput(event.Title, uiMsg, details.FilePath)
 }
 
 func (c *Core) Run(ctx context.Context, userId string, task string, workDir string, sess SessionInterface) RunResult {
@@ -336,7 +337,7 @@ func (c *Core) Run(ctx context.Context, userId string, task string, workDir stri
 		requestId := uuid.New().String()[:8]
 
 		// Extract command details from both title and message body
-		command, rule := parseHITLDetails(event.Title, event.UIMessage, event.Method)
+		command, rule := parseHITLDetails(event.Title, event.UIMessageString(), event.Method)
 
 		// Build detailed HITL request with enriched context
 		details := HITLRequestDetails{

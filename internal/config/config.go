@@ -24,6 +24,11 @@ type PiConfig struct {
 	Model         string   `mapstructure:"model"`
 	ExtensionsDir string   `mapstructure:"extensions_dir"`
 	ExtraArgs     []string `mapstructure:"extra_args"`
+	// NoSkills passes --no-skills to pi, disabling auto-discovery from ~/.pi/agent/skills/.
+	// AgentLoop exposes vault skills via resources_discover instead (vault-skills.ts).
+	NoSkills bool `mapstructure:"no_skills"`
+	// VaultPath is injected at runtime (not from YAML) so extensions can locate vault skills.
+	VaultPath string `mapstructure:"-"`
 }
 
 type VaultConfig struct {
@@ -142,9 +147,10 @@ func Defaults() *Config {
 	return &Config{
 		Server: ServerConfig{SocketPath: "~/.local/share/agentloop/agentloop.sock"},
 		Pi: PiConfig{
-			Binary:   "pi",
-			Provider: "anthropic",
-			Model:    "claude-sonnet-4-20250514",
+			Binary:    "pi",
+			Provider:  "anthropic",
+			Model:     "claude-sonnet-4-20250514",
+			NoSkills:  true,
 		},
 		Vault: VaultConfig{Path: "~/.local/share/agentloop/vault"},
 		Memory: MemoryConfig{
@@ -316,16 +322,19 @@ func Defaults() *Config {
 				Binary:   "pi",
 				Provider: "anthropic",
 				Model:    "claude-opus-4-6",
+				NoSkills: true,
 			},
 			Worker: PiConfig{
 				Binary:   "pi",
 				Provider: "anthropic",
 				Model:    "claude-sonnet-4-6",
+				NoSkills: true,
 			},
 			Judge: PiConfig{
 				Binary:   "pi",
 				Provider: "anthropic",
 				Model:    "claude-opus-4-6",
+				NoSkills: true,
 			},
 			WorkerPoolSize:   4,
 			MaxIterations:    3,

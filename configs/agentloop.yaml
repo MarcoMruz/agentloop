@@ -1,251 +1,251 @@
 server:
-    socket_path: ~/.local/share/agentloop/agentloop.sock
+  socket_path: ~/.local/share/agentloop/agentloop.sock
 
 vault:
-    path: ~/.local/share/agentloop/vault
+  path: ~/.local/share/agentloop/vault
 
 pi:
-    binary: pi
-    provider: anthropic
-    model: claude-sonnet-4-20250514
-    extensions_dir: "" # auto-detected
-    extra_args: []
+  binary: pi
+  provider: anthropic
+  model: claude-sonnet-4-20250514
+  extensions_dir: "" # auto-detected
+  extra_args: []
 
 memory:
-    max_profile_entries: 50
-    conversation_retain_days: 30
-    compaction_threshold: 40
-    compaction_strategy: rolling # rolling, facts, or topics
-    max_context_tokens: 3000
-    prompt_cache_ttl_minutes: 60
-    embedding_dims: 0  # set to 768 if using an embedding provider (0 = keyword-only search)
-    agent:
-        enabled: false      # enable background pi subprocess for delta extraction
-        binary: pi
-        provider: anthropic
-        model: claude-haiku-4-5-20251001  # use a cheap/fast model for background ops
+  max_profile_entries: 50
+  conversation_retain_days: 30
+  compaction_threshold: 40
+  compaction_strategy: rolling # rolling, facts, or topics
+  max_context_tokens: 3000
+  prompt_cache_ttl_minutes: 60
+  embedding_dims: 0 # set to 768 if using an embedding provider (0 = keyword-only search)
+  agent:
+    enabled: false # enable background pi subprocess for delta extraction
+    binary: pi
+    provider: anthropic
+    model: claude-haiku-4-5-20251001 # use a cheap/fast model for background ops
 
 sessions:
-    max_concurrent: 5
-    max_per_user: 5
-    timeout_minutes: 30
-    max_token_budget: 200000
-    max_tool_calls: 100
-    stuck_threshold: 3
-    evict_lru: true # when max_concurrent is reached, abort the session with oldest last response
+  max_concurrent: 5
+  max_per_user: 5
+  timeout_minutes: 30
+  max_token_budget: 200000
+  max_tool_calls: 100
+  stuck_threshold: 3
+  evict_lru: true # when max_concurrent is reached, abort the session with oldest last response
 
 hitl:
-    always_pause_tools:
-        - docker
-        - git push
-        - rm -r
-        - curl
-        - wget
-    timeout_seconds: 300
-    timeout_action: deny
-    # Keywords that trigger HITL approval in the force-hitl extension.
-    # Any bash command containing one of these strings will pause for user approval.
-    force_hitl_keywords:
-        - sudo
-        - chmod
-        - chown
-        - systemctl
-        - npm install
-        - pip install
-        - yarn add
+  always_pause_tools:
+    - docker
+    - git push
+    - rm -r
+    - curl
+    - wget
+  timeout_seconds: 300
+  timeout_action: deny
+  # Keywords that trigger HITL approval in the force-hitl extension.
+  # Any bash command containing one of these strings will pause for user approval.
+  force_hitl_keywords:
+    - sudo
+    - chmod
+    - chown
+    - systemctl
+    - npm install
+    - pip install
+    - yarn add
 
 security:
-    allowed_paths:
-        - ~/projects
-        - ~/tmp
-        - ~/agentloop-sandbox
-    blocked_env_prefixes:
-        - ANTHROPIC_
-        - OPENAI_
-        - BRAVE_SEARCH_
-        - N8N_WEBHOOK_
-        - AWS_SECRET
-        - GITHUB_TOKEN
-        - SECRET_KEY
-        - PRIVATE_KEY
-    blocked_cidrs:
-        - "10.0.0.0/8"
-        - "172.16.0.0/12"
-        - "192.168.0.0/16"
-        - "127.0.0.0/8"
-        - "169.254.0.0/16"
-        - "::1/128"
-        - "fc00::/7"
-        - "fe80::/10"
-    docker_allowed_subcommands:
+  allowed_paths:
+    - ~/projects
+    - ~/tmp
+    - ~/agentloop-sandbox
+  blocked_env_prefixes:
+    - ANTHROPIC_
+    - OPENAI_
+    - BRAVE_SEARCH_
+    - N8N_WEBHOOK_
+    - AWS_SECRET
+    - GITHUB_TOKEN
+    - SECRET_KEY
+    - PRIVATE_KEY
+  blocked_cidrs:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+    - "127.0.0.0/8"
+    - "169.254.0.0/16"
+    - "::1/128"
+    - "fc00::/7"
+    - "fe80::/10"
+  docker_allowed_subcommands:
+    - ps
+    - logs
+    - images
+    - build
+    - compose
+    - inspect
+    - stats
+    - top
+    - exec
+    - run
+    - stop
+    - start
+    - restart
+    - rm
+  docker_blocked_volume_paths:
+    - /etc
+    - /var
+    - /root
+    - /proc
+    - /sys
+    - /dev
+
+  # Tiered Security Policy (NEW)
+  policy_mode: selective # strict, selective, permissive
+
+  tiers:
+    safe_operations:
+      # Commands that run without approval
+      bash_patterns:
+        - "^ls\\b"
+        - "^cat\\b"
+        - "^grep\\b"
+        - "^find\\b"
+        - "^pwd$"
+        - "^echo\\b"
+        - "^which\\b"
+        - "^git log"
+        - "^git status"
+        - "^git diff"
+        - "^head\\b"
+        - "^tail\\b"
+        - "^wc\\b"
+        - "^sort\\b"
+        - "^uniq\\b"
+      tools:
+        - read
+      docker_commands:
         - ps
         - logs
         - images
-        - build
-        - compose
         - inspect
         - stats
         - top
-        - exec
+
+    logged_operations:
+      # Commands that run but are logged for audit
+      bash_patterns:
+        - "^git checkout"
+        - "^git branch"
+        - "^npm install"
+        - "^yarn install"
+        - "^mkdir\\b"
+        - "^touch\\b"
+        - "^cp\\b"
+        - "^mv\\b"
+        - "^go build"
+        - "^go test"
+        - "^cargo build"
+        - "^cargo test"
+      tools:
+        - write
+        - edit
+      docker_commands:
+        - build
         - run
-        - stop
+        - exec
         - start
-        - restart
+
+    hitl_required:
+      # Commands requiring human approval
+      bash_patterns:
+        - "\\bsudo\\b"
+        - "\\bchmod\\b"
+        - "\\bchown\\b"
+        - "\\brm\\b.*-r"
+        - "\\bsystemctl\\b"
+        - "\\bservice\\b"
+        - "\\busermod\\b"
+        - "\\buserdel\\b"
+        - "\\buseradd\\b"
+        - "curl.*-X.*POST"
+        - "wget.*--post"
+      docker_commands:
         - rm
-    docker_blocked_volume_paths:
-        - /etc
-        - /var
-        - /root
-        - /proc
-        - /sys
-        - /dev
+        - stop
+        - restart
+        - compose
 
-    # Tiered Security Policy (NEW)
-    policy_mode: selective # strict, selective, permissive
-
-    tiers:
-        safe_operations:
-            # Commands that run without approval
-            bash_patterns:
-                - "^ls\\b"
-                - "^cat\\b"
-                - "^grep\\b"
-                - "^find\\b"
-                - "^pwd$"
-                - "^echo\\b"
-                - "^which\\b"
-                - "^git log"
-                - "^git status"
-                - "^git diff"
-                - "^head\\b"
-                - "^tail\\b"
-                - "^wc\\b"
-                - "^sort\\b"
-                - "^uniq\\b"
-            tools:
-                - read
-            docker_commands:
-                - ps
-                - logs
-                - images
-                - inspect
-                - stats
-                - top
-
-        logged_operations:
-            # Commands that run but are logged for audit
-            bash_patterns:
-                - "^git checkout"
-                - "^git branch"
-                - "^npm install"
-                - "^yarn install"
-                - "^mkdir\\b"
-                - "^touch\\b"
-                - "^cp\\b"
-                - "^mv\\b"
-                - "^go build"
-                - "^go test"
-                - "^cargo build"
-                - "^cargo test"
-            tools:
-                - write
-                - edit
-            docker_commands:
-                - build
-                - run
-                - exec
-                - start
-
-        hitl_required:
-            # Commands requiring human approval
-            bash_patterns:
-                - "\\bsudo\\b"
-                - "\\bchmod\\b"
-                - "\\bchown\\b"
-                - "\\brm\\b.*-r"
-                - "\\bsystemctl\\b"
-                - "\\bservice\\b"
-                - "\\busermod\\b"
-                - "\\buserdel\\b"
-                - "\\buseradd\\b"
-                - "curl.*-X.*POST"
-                - "wget.*--post"
-            docker_commands:
-                - rm
-                - stop
-                - restart
-                - compose
-
-        always_blocked:
-            # Commands that are never allowed
-            bash_patterns:
-                - "rm -rf /"
-                - "mkfs"
-                - "> /dev/sd"
-                - "dd if="
-                - ":(){ :|:& };:"
-                - "\\bformat\\b.*C:"
-                - "shutdown"
-                - "reboot"
-                - "halt"
-            volume_mounts:
-                - "/etc"
-                - "/var"
-                - "/root"
-                - "/proc"
-                - "/sys"
-                - "/dev"
-    injection:
-        enable_protection: true
-        whitelist_sources:
-            - ~/projects
-            - ~/agentloop-sandbox
-            - ~/.config/agentloop
-            - ~/dev
-            - ~/development
-        blocked_keywords:
-            - ignore previous instructions
-            - forget everything above
-            - act as if you are
-            - pretend you are
-            - roleplay as
-            - API_KEY
-            - SECRET
-            - TOKEN
-            - PASSWORD
-            - PRIVATE_KEY
-            - credentials
-            - auth
-            - login
-        sanitize_memory: true
-        require_approval:
-            - skills/*
-            - node_modules/*
-            - "*/attachments/*"
-            - "cloud:*"
-            - "fetch:*"
-            - .git/*
-        approval_tier: owner # owner, admin, auto-deny
-        sensitive_patterns:
-            - '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b' # emails
-            - '\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b' # IP addresses
-            - "sk-[a-zA-Z0-9]{48}" # OpenAI keys
-            - "xoxb-[0-9]+-[0-9]+-[0-9]+-[a-zA-Z0-9]+" # Slack tokens
-            - '\b[A-Fa-f0-9]{32,}\b' # hex keys (after specific patterns)
-        max_content_length: 50000 # 50KB max content size
-        detection_threshold: 0.7 # 70% confidence threshold
+    always_blocked:
+      # Commands that are never allowed
+      bash_patterns:
+        - "rm -rf /"
+        - "mkfs"
+        - "> /dev/sd"
+        - "dd if="
+        - ":(){ :|:& };:"
+        - "\\bformat\\b.*C:"
+        - "shutdown"
+        - "reboot"
+        - "halt"
+      volume_mounts:
+        - "/etc"
+        - "/var"
+        - "/root"
+        - "/proc"
+        - "/sys"
+        - "/dev"
+  injection:
+    enable_protection: true
+    whitelist_sources:
+      - ~/projects
+      - ~/agentloop-sandbox
+      - ~/.config/agentloop
+      - ~/dev
+      - ~/development
+    blocked_keywords:
+      - ignore previous instructions
+      - forget everything above
+      - act as if you are
+      - pretend you are
+      - roleplay as
+      - API_KEY
+      - SECRET
+      - TOKEN
+      - PASSWORD
+      - PRIVATE_KEY
+      - credentials
+      - auth
+      - login
+    sanitize_memory: true
+    require_approval:
+      - skills/*
+      - node_modules/*
+      - "*/attachments/*"
+      - "cloud:*"
+      - "fetch:*"
+      - .git/*
+    approval_tier: owner # owner, admin, auto-deny
+    sensitive_patterns:
+      - '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b' # emails
+      - '\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b' # IP addresses
+      - "sk-[a-zA-Z0-9]{48}" # OpenAI keys
+      - "xoxb-[0-9]+-[0-9]+-[0-9]+-[a-zA-Z0-9]+" # Slack tokens
+      - '\b[A-Fa-f0-9]{32,}\b' # hex keys (after specific patterns)
+    max_content_length: 50000 # 50KB max content size
+    detection_threshold: 0.7 # 70% confidence threshold
 
 skills:
-    skill_dirs:
-        - ~/.local/share/agentloop/vault/skills
-    agent:
-        binary: ""        # inherits pi.binary if blank
-        provider: ""      # inherits pi.provider if blank
-        model: ""         # inherits pi.model if blank; use a cheaper model for skill selection, e.g. claude-haiku-4-5-20251001
+  skill_dirs:
+    - ~/.local/share/agentloop/vault/skills
+  agent:
+    binary: "" # inherits pi.binary if blank
+    provider: "" # inherits pi.provider if blank
+    model: "claude-haiku-4-5" # inherits pi.model if blank; use a cheaper model for skill selection, e.g. claude-haiku-4-5-20251001
 
 logging:
-    level: debug
-    file: ~/.config/agentloop/agentloop.log
+  level: debug
+  file: ~/.config/agentloop/agentloop.log
 
 # Evolution (MemEvolve)
 evolution:

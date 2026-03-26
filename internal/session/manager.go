@@ -66,12 +66,16 @@ type Manager struct {
 }
 
 func NewManager(cfg *config.Config, v *vault.Vault, mem *memory.Engine, sk *skills.Registry) *Manager {
+	piCfg := cfg.Pi
+	piCfg.VaultPath = v.Path() // inject vault path so extensions can discover vault skills
+	orchCfg := cfg.Orchestrator
+	orchCfg.Worker.VaultPath = v.Path()
 	return &Manager{
 		cfg:      cfg.Sessions,
-		piCfg:    cfg.Pi,
+		piCfg:    piCfg,
 		secCfg:   cfg.Security,
 		hitlCfg:  cfg.HITL,
-		orchCfg:  cfg.Orchestrator,
+		orchCfg:  orchCfg,
 		vault:    v,
 		memory:   mem,
 		skills:   sk,

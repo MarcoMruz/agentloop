@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/MarcoMruz/agentloop/internal/bridge"
 	"github.com/MarcoMruz/agentloop/internal/config"
@@ -28,10 +29,24 @@ func RunTextSession(
 	b := bridge.New(piCfg, secCfg, config.HITLConfig{})
 
 	var response strings.Builder
+
+	// doneCh closes on agent_end; pi stays alive in --mode rpc so we cannot
+	// rely on b.Done() (process exit) to signal completion.
+	doneCh := make(chan struct{})
+	var once sync.Once
+	closeDone := func() { once.Do(func() { close(doneCh) }) }
+
 	b.SetEventHandler(func(event bridge.RPCEvent) error {
-		if event.Type == "message_update" && event.AssistantMessageEvent != nil {
-			if event.AssistantMessageEvent.Type == "text_delta" {
+		switch event.Type {
+		case "message_update":
+			if event.AssistantMessageEvent != nil && event.AssistantMessageEvent.Type == "text_delta" {
 				response.WriteString(event.AssistantMessageEvent.Delta)
+			}
+		case "agent_end":
+			closeDone()
+		case "auto_retry_end":
+			if !event.Success {
+				closeDone()
 			}
 		}
 		return nil
@@ -47,7 +62,8 @@ func RunTextSession(
 	}
 
 	select {
-	case <-b.Done():
+	case <-doneCh:
+	case <-b.Done(): // pi process exited unexpectedly
 	case <-ctx.Done():
 		return response.String(), ctx.Err()
 	}

@@ -153,6 +153,22 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 				})
 			},
 			OnHITLRequest: func(details agent.HITLRequestDetails) {
+				// Auto-approve low/medium risk requests when configured to do so.
+				// High-risk (and unknown) requests always require human approval.
+				if m.secCfg.AutoApproveNonHigh &&
+					(details.RiskLevel == "low" || details.RiskLevel == "medium") {
+					sess.SetPendingHITL(details.RequestId)
+					// Resolve immediately without blocking.
+					_ = sess.ResolveHITL(details.RequestId, "approve")
+					// Broadcast an informational event so clients can observe the auto-approval.
+					req.HITLNotifier.Broadcast(sess.ID, "event.hitl_auto_approved", map[string]any{
+						"sessionId": sess.ID, "requestId": details.RequestId,
+						"toolName": details.ToolName, "riskLevel": details.RiskLevel,
+						"command": details.Command, "rule": details.Rule,
+					})
+					return
+				}
+
 				sess.SetPendingHITL(details.RequestId)
 				params := map[string]any{
 					"sessionId": sess.ID, "requestId": details.RequestId,
@@ -420,6 +436,13 @@ func (m *Manager) evictOldestLRU() string {
 		delete(m.userMap, oldest.UserID)
 	}
 	return oldest.ID
+}
+
+// shouldAutoApprove returns true when the server config permits auto-approving
+// the given risk level without human input. Only "low" and "medium" risk levels
+// are eligible; "high" (and anything else) always require human approval.
+func shouldAutoApprove(autoApproveEnabled bool, riskLevel string) bool {
+	return autoApproveEnabled && (riskLevel == "low" || riskLevel == "medium")
 }
 
 func truncate(s string, n int) string {

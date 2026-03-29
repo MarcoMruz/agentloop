@@ -131,6 +131,9 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 	go func() {
 		defer m.cleanupSession(sess)
 
+		// Transition to running now that the goroutine is active.
+		sess.SetRunning()
+
 		loader := agent.NewAgentLoader(m.vault.Path())
 		orch := agent.NewOrchestrator(loader, m.memory, m.pipeline, m.collector, m.metaAgent, m.secCfg, m.hitlCfg)
 		octx := agent.NewOrchestratorCtx(sess.ID, req.UserID, req.WorkDir, req.Source, sess.ConversationContextID, m.orchCfg)

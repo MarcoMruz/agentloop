@@ -106,6 +106,16 @@ func (s *Session) Info() SessionInfo {
 	}
 }
 
+// SetRunning transitions the session from StateStarting to StateRunning.
+// Called by the session manager once the agent goroutine is active.
+func (s *Session) SetRunning() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.State == StateStarting {
+		s.State = StateRunning
+	}
+}
+
 func (s *Session) Steer(text string) error {
 	atomic.AddInt32(&s.steerCount, 1)
 	select {
@@ -146,14 +156,16 @@ func (s *Session) ResolveHITL(requestId string, decision string) error {
 		s.mu.Unlock()
 		return fmt.Errorf("no pending HITL request %q", requestId)
 	}
-	delete(s.hitlPending, requestId)
+	// Do NOT delete from hitlPending here — WaitHITL must be able to look it up
+	// by requestId after this call returns (especially in the auto-approve path where
+	// ResolveHITL is called synchronously before WaitHITL). WaitHITL will clean up.
 	s.State = StateRunning
 	s.mu.Unlock()
 
 	if decision == "deny" {
 		atomic.AddInt32(&s.hitlDenials, 1)
 	}
-	ch <- decision
+	ch <- decision // buffered (size 1), never blocks
 	return nil
 }
 
@@ -175,6 +187,10 @@ func (s *Session) WaitHITL(requestId string, timeout time.Duration) (string, err
 
 	select {
 	case decision := <-ch:
+		// Clean up map entry now that we've consumed the decision.
+		s.mu.Lock()
+		delete(s.hitlPending, requestId)
+		s.mu.Unlock()
 		return decision, nil
 	case <-time.After(timeout):
 		s.mu.Lock()

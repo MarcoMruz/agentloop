@@ -48,21 +48,21 @@ func (r StartRequest) ComputeConversationContextID() string {
 }
 
 type Manager struct {
-	cfg      config.SessionConfig
-	piCfg    config.PiConfig
-	secCfg   config.SecurityConfig
-	hitlCfg  config.HITLConfig
-	orchCfg  config.OrchestratorConfig
-	vault    *vault.Vault
-	memory   *memory.Engine
-	skills   *skills.Registry
+	cfg        config.SessionConfig
+	piCfg      config.PiConfig
+	secCfg     config.SecurityConfig
+	hitlCfg    config.HITLConfig
+	orchCfg    config.OrchestratorConfig
+	vault      *vault.Vault
+	memory     *memory.Engine
+	skills     *skills.Registry
 	skillAgent *skills.SkillAgent
-	collector *metrics.Collector
-	pipeline  *evolve.PipelineHolder
-	metaAgent *meta.MetaAgent
-	sessions  map[string]*Session
-	userMap   map[string][]string // userId → active sessionIds
-	mu        sync.RWMutex
+	collector  *metrics.Collector
+	pipeline   *evolve.PipelineHolder
+	metaAgent  *meta.MetaAgent
+	sessions   map[string]*Session
+	userMap    map[string][]string // userId → active sessionIds
+	mu         sync.RWMutex
 }
 
 func NewManager(cfg *config.Config, v *vault.Vault, mem *memory.Engine, sk *skills.Registry) *Manager {
@@ -155,8 +155,7 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 			OnHITLRequest: func(details agent.HITLRequestDetails) {
 				// Auto-approve low/medium risk requests when configured to do so.
 				// High-risk (and unknown) requests always require human approval.
-				if m.secCfg.AutoApproveNonHigh &&
-					(details.RiskLevel == "low" || details.RiskLevel == "medium") {
+				if shouldAutoApprove(m.secCfg.AutoApproveNonHigh, details.RiskLevel) {
 					sess.SetPendingHITL(details.RequestId)
 					// Resolve immediately without blocking.
 					_ = sess.ResolveHITL(details.RequestId, "approve")
@@ -346,7 +345,9 @@ func (m *Manager) Steer(sessionId string, text string) error {
 	m.mu.RLock()
 	sess := m.sessions[sessionId]
 	m.mu.RUnlock()
-	if sess == nil { return fmt.Errorf("session %q not found", sessionId) }
+	if sess == nil {
+		return fmt.Errorf("session %q not found", sessionId)
+	}
 	return sess.Steer(text)
 }
 
@@ -354,7 +355,9 @@ func (m *Manager) Abort(sessionId string) error {
 	m.mu.RLock()
 	sess := m.sessions[sessionId]
 	m.mu.RUnlock()
-	if sess == nil { return fmt.Errorf("session %q not found", sessionId) }
+	if sess == nil {
+		return fmt.Errorf("session %q not found", sessionId)
+	}
 	sess.Abort()
 	return nil
 }
@@ -363,7 +366,9 @@ func (m *Manager) ResolveHITL(sessionId string, requestId string, decision strin
 	m.mu.RLock()
 	sess := m.sessions[sessionId]
 	m.mu.RUnlock()
-	if sess == nil { return fmt.Errorf("session %q not found", sessionId) }
+	if sess == nil {
+		return fmt.Errorf("session %q not found", sessionId)
+	}
 	return sess.ResolveHITL(requestId, decision)
 }
 
@@ -372,8 +377,12 @@ func (m *Manager) List(userId string, status string) []SessionInfo {
 	defer m.mu.RUnlock()
 	var out []SessionInfo
 	for _, sess := range m.sessions {
-		if userId != "" && sess.UserID != userId { continue }
-		if status != "" && string(sess.State) != status { continue }
+		if userId != "" && sess.UserID != userId {
+			continue
+		}
+		if status != "" && string(sess.State) != status {
+			continue
+		}
 		out = append(out, sess.Info())
 	}
 	return out
@@ -446,7 +455,9 @@ func shouldAutoApprove(autoApproveEnabled bool, riskLevel string) bool {
 }
 
 func truncate(s string, n int) string {
-	if len(s) <= n { return s }
+	if len(s) <= n {
+		return s
+	}
 	return s[:n] + "...[truncated]"
 }
 

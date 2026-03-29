@@ -18,9 +18,9 @@ memory:
   compaction_strategy: rolling # rolling, facts, or topics
   max_context_tokens: 3000
   prompt_cache_ttl_minutes: 60
-  embedding_dims: 0 # set to 768 if using an embedding provider (0 = keyword-only search)
+  embedding_dims: 768 # set to 768 if using an embedding provider (0 = keyword-only search)
   agent:
-    enabled: false # enable background pi subprocess for delta extraction
+    enabled: true # enable background pi subprocess for delta extraction
     binary: pi
     provider: anthropic
     model: claude-haiku-4-5-20251001 # use a cheap/fast model for background ops

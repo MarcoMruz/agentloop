@@ -196,6 +196,56 @@ security:
         - "/proc"
         - "/sys"
         - "/dev"
+  # Controls HITL auto-approval in internal read-only sessions (planner, judge,
+  # skill agent, meta agent). If a bash command matches any deny_pattern it is
+  # auto-denied; otherwise it is auto-approved so agents can gather context.
+  readonly_sessions:
+    deny_patterns:
+      # Shell output redirects
+      - " > "
+      - " >> "
+      - "\\btee\\b"
+      # Destructive file ops
+      - "\\brm\\b"
+      - "\\brmdir\\b"
+      - "\\bmv\\b"
+      - "\\bmkdir\\b"
+      - "\\btouch\\b"
+      # Permission / ownership changes
+      - "\\bchmod\\b"
+      - "\\bchown\\b"
+      - "\\bchattr\\b"
+      # In-place edits
+      - "\\bsed\\b.*-i"
+      - "\\bawk\\b.*-i"
+      # Git write ops — read ops (log, show, diff, status, blame) are allowed
+      - "\\bgit\\b.*(commit|push|reset|rebase|merge|stash pop|tag\\b|branch -[dD])"
+      # curl: deny non-GET methods and body flags; plain GET / --head is fine
+      - "curl\\b.*(-X\\s*(POST|PUT|DELETE|PATCH)|--data\\b|-d\\s|--upload-file|--data-raw|--data-binary)"
+      # wget: deny POST variants; plain wget (GET) is fine
+      - "wget\\b.*(--post-data|--post-file|--method=(POST|PUT|DELETE|PATCH))"
+      # Package managers (write ops only)
+      - "\\bnpm\\b.*(install|i\\b|add|rm\\b|uninstall|update|upgrade|publish)"
+      - "\\bpip[23]?\\b.*(install|uninstall|download)"
+      - "\\byarn\\b.*(add|remove|install|upgrade)"
+      - "\\bbrew\\b.*(install|uninstall|upgrade|reinstall)"
+      - "\\bapt(-get)?\\b.*(install|remove|purge|upgrade)"
+      - "\\byum\\b.*(install|remove|update)"
+      - "\\bdnf\\b.*(install|remove|update)"
+      # Privilege escalation
+      - "\\bsudo\\b"
+      - "\\bsu\\b\\s"
+      # Process termination
+      - "\\bkill\\b"
+      - "\\bpkill\\b"
+      - "\\bkillall\\b"
+      # System control
+      - "\\bsystemctl\\b"
+      # Disk / low-level ops
+      - "\\btruncate\\b"
+      - "\\bdd\\b"
+      - "\\bmkfs\\b"
+
   injection:
     enable_protection: true
     whitelist_sources:

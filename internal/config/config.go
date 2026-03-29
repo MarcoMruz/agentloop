@@ -70,16 +70,24 @@ type HITLConfig struct {
 	ForceHITLKeywords  []string `mapstructure:"force_hitl_keywords"`
 }
 
+// ReadonlySessionConfig controls HITL auto-approval in internal read-only pi
+// sessions (planner, judge, skill agent, meta agent). If the bash command in a
+// HITL request matches any deny_pattern it is auto-denied; otherwise approved.
+type ReadonlySessionConfig struct {
+	DenyPatterns []string `mapstructure:"deny_patterns"`
+}
+
 type SecurityConfig struct {
-	AllowedPaths             []string        `mapstructure:"allowed_paths"`
-	BlockedEnvPrefixes       []string        `mapstructure:"blocked_env_prefixes"`
-	BlockedCIDRs             []string        `mapstructure:"blocked_cidrs"`
-	DockerAllowedSubcommands []string        `mapstructure:"docker_allowed_subcommands"`
-	DockerBlockedVolumePaths []string        `mapstructure:"docker_blocked_volume_paths"`
-	Injection                InjectionConfig `mapstructure:"injection"`
-	PolicyMode               string          `mapstructure:"policy_mode"`
-	Tiers                    SecurityTiers   `mapstructure:"tiers"`
-	AutoApproveNonHigh       bool            `mapstructure:"auto_approve_non_high"`
+	AllowedPaths             []string             `mapstructure:"allowed_paths"`
+	BlockedEnvPrefixes       []string             `mapstructure:"blocked_env_prefixes"`
+	BlockedCIDRs             []string             `mapstructure:"blocked_cidrs"`
+	DockerAllowedSubcommands []string             `mapstructure:"docker_allowed_subcommands"`
+	DockerBlockedVolumePaths []string             `mapstructure:"docker_blocked_volume_paths"`
+	Injection                InjectionConfig      `mapstructure:"injection"`
+	PolicyMode               string               `mapstructure:"policy_mode"`
+	Tiers                    SecurityTiers        `mapstructure:"tiers"`
+	AutoApproveNonHigh       bool                 `mapstructure:"auto_approve_non_high"`
+	ReadonlySessions         ReadonlySessionConfig `mapstructure:"readonly_sessions"`
 }
 
 type SecurityTiers struct {
@@ -301,6 +309,42 @@ func Defaults() *Config {
 						"halt",
 					},
 					VolumeMounts: []string{"/etc", "/var", "/root", "/proc", "/sys", "/dev"},
+				},
+			},
+			ReadonlySessions: ReadonlySessionConfig{
+				DenyPatterns: []string{
+					// Shell output redirects
+					" > ", " >> ",
+					`\btee\b`,
+					// Destructive file ops
+					`\brm\b`, `\brmdir\b`, `\bmv\b`,
+					`\bmkdir\b`, `\btouch\b`,
+					// Permission / ownership changes
+					`\bchmod\b`, `\bchown\b`, `\bchattr\b`,
+					// In-place edits
+					`\bsed\b.*-i`, `\bawk\b.*-i`,
+					// Git write ops (commit, push, reset, rebase, merge, branch deletes)
+					`\bgit\b.*(commit|push|reset|rebase|merge|stash pop|tag\b|branch -[dD])`,
+					// curl: deny non-GET methods and body flags; plain GET is fine
+					`curl\b.*(-X\s*(POST|PUT|DELETE|PATCH)|--data\b|-d\s|--upload-file|--data-raw|--data-binary)`,
+					// wget: deny POST variants; plain GET is fine
+					`wget\b.*(--post-data|--post-file|--method=(POST|PUT|DELETE|PATCH))`,
+					// Package managers (write ops)
+					`\bnpm\b.*(install|i\b|add|rm\b|uninstall|update|upgrade|publish)`,
+					`\bpip[23]?\b.*(install|uninstall|download)`,
+					`\byarn\b.*(add|remove|install|upgrade)`,
+					`\bbrew\b.*(install|uninstall|upgrade|reinstall)`,
+					`\bapt(-get)?\b.*(install|remove|purge|upgrade)`,
+					`\byum\b.*(install|remove|update)`,
+					`\bdnf\b.*(install|remove|update)`,
+					// Privilege escalation
+					`\bsudo\b`, `\bsu\b\s`,
+					// Process termination
+					`\bkill\b`, `\bpkill\b`, `\bkillall\b`,
+					// System control
+					`\bsystemctl\b`,
+					// Disk / low-level
+					`\btruncate\b`, `\bdd\b`, `\bmkfs\b`,
 				},
 			},
 		},

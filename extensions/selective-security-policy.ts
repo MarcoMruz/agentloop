@@ -228,12 +228,12 @@ const selectiveSecurityPolicy: ExtensionFactory = (pi) => {
     switch (classification) {
       case "allow":
         // Log safe operations for audit trail
-        console.log(`[SECURITY] ALLOWED: ${command}`);
+        console.error(`[SECURITY] ALLOWED: ${command}`);
         return undefined; // Allow execution
 
       case "log":
         // Log moderate risk operations but allow them
-        console.log(`[SECURITY] LOGGED: ${command}`);
+        console.error(`[SECURITY] LOGGED: ${command}`);
         return undefined; // Allow execution
 
       case "hitl":
@@ -245,7 +245,7 @@ const selectiveSecurityPolicy: ExtensionFactory = (pi) => {
           };
         }
 
-        console.log(`[SECURITY] HITL REQUIRED: ${command}`);
+        console.error(`[SECURITY] HITL REQUIRED: ${command}`);
         const confirmed = await ctx.ui.confirm(
           "High-Risk Command Approval",
           `Command requires approval:\n\n${command}\n\nThis command has been classified as high-risk. Allow execution?`
@@ -255,12 +255,12 @@ const selectiveSecurityPolicy: ExtensionFactory = (pi) => {
           return { block: true, reason: `High-risk command denied by user: ${command}` };
         }
 
-        console.log(`[SECURITY] HITL APPROVED: ${command}`);
+        console.error(`[SECURITY] HITL APPROVED: ${command}`);
         return undefined; // Allow after approval
 
       case "block":
         // Always block dangerous operations
-        console.log(`[SECURITY] BLOCKED: ${command}`);
+        console.error(`[SECURITY] BLOCKED: ${command}`);
         return { 
           block: true, 
           reason: `Dangerous command blocked by security policy: ${command}` 
@@ -282,11 +282,11 @@ const selectiveSecurityPolicy: ExtensionFactory = (pi) => {
 
     switch (classification) {
       case "allow":
-        console.log(`[SECURITY] ALLOWED: ${event.toolName} ${filePath}`);
+        console.error(`[SECURITY] ALLOWED: ${event.toolName} ${filePath}`);
         return undefined;
 
       case "log":
-        console.log(`[SECURITY] LOGGED: ${event.toolName} ${filePath}`);
+        console.error(`[SECURITY] LOGGED: ${event.toolName} ${filePath}`);
         return undefined;
 
       case "hitl":
@@ -297,7 +297,7 @@ const selectiveSecurityPolicy: ExtensionFactory = (pi) => {
           };
         }
 
-        console.log(`[SECURITY] HITL REQUIRED: ${event.toolName} ${filePath}`);
+        console.error(`[SECURITY] HITL REQUIRED: ${event.toolName} ${filePath}`);
         const confirmed = await ctx.ui.confirm(
           "File Operation Approval",
           `File operation requires approval:\n\nTool: ${event.toolName}\nPath: ${filePath}\n\nAllow access?`
@@ -310,7 +310,7 @@ const selectiveSecurityPolicy: ExtensionFactory = (pi) => {
           };
         }
 
-        console.log(`[SECURITY] HITL APPROVED: ${event.toolName} ${filePath}`);
+        console.error(`[SECURITY] HITL APPROVED: ${event.toolName} ${filePath}`);
         return undefined;
 
       default:
@@ -326,9 +326,9 @@ const selectiveSecurityPolicy: ExtensionFactory = (pi) => {
     const classification = classifyReadOperation(filePath);
 
     if (classification === "log") {
-      console.log(`[SECURITY] SENSITIVE READ: ${filePath}`);
+      console.error(`[SECURITY] SENSITIVE READ: ${filePath}`);
     } else {
-      console.log(`[SECURITY] READ: ${filePath}`);
+      console.error(`[SECURITY] READ: ${filePath}`);
     }
 
     return undefined; // Always allow reads, just log sensitive ones

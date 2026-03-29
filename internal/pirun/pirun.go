@@ -3,7 +3,9 @@ package pirun
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -52,6 +54,16 @@ func RunTextSession(
 		return nil
 	})
 
+	// Handle HITL in read-only sessions (planner, judge, skill agent, meta agent).
+	// Auto-approve read-only bash exploration (find, grep, git log, curl GET, etc.)
+	// so agents can gather context. Deny patterns come from security.readonly_sessions
+	// in agentloop.yaml — anything matching those patterns is auto-denied.
+	b.SetHITLHandler(func(event bridge.RPCEvent) (bool, error) {
+		approve := isReadOnlyHITL(event, secCfg)
+		slog.Debug("RunTextSession HITL", "title", event.Title, "command", extractHITLCommand(event.UIMessageString()), "approve", approve)
+		return approve, nil
+	})
+
 	if err := b.Start(ctx, workDir); err != nil {
 		return "", fmt.Errorf("start pi: %w", err)
 	}
@@ -68,4 +80,47 @@ func RunTextSession(
 		return response.String(), ctx.Err()
 	}
 	return response.String(), nil
+}
+
+// isReadOnlyHITL returns true when the HITL request is for a read-only operation
+// that should be auto-approved in internal sessions (planner, judge, skill agent).
+// It matches the bash command from the HITL message against secCfg.ReadonlySessions.DenyPatterns;
+// if any pattern matches the request is denied, otherwise approved.
+func isReadOnlyHITL(event bridge.RPCEvent, secCfg config.SecurityConfig) bool {
+	title := strings.ToLower(event.Title)
+
+	// File write/edit tool operations are never read-only.
+	if strings.Contains(title, "file operation") || strings.Contains(title, "path access") {
+		return false
+	}
+
+	// Extract the bash command from the HITL message body.
+	// Extension format: "Command requires approval:\n\n<command>\n\n..."
+	command := extractHITLCommand(event.UIMessageString())
+	if command == "" {
+		return false // can't determine intent — deny to be safe
+	}
+
+	for _, pattern := range secCfg.ReadonlySessions.DenyPatterns {
+		matched, err := regexp.MatchString(pattern, command)
+		if err == nil && matched {
+			return false
+		}
+	}
+	return true
+}
+
+// extractHITLCommand pulls the command out of the extension's confirm() message body.
+func extractHITLCommand(msg string) string {
+	const marker = "Command requires approval:\n\n"
+	idx := strings.Index(msg, marker)
+	if idx == -1 {
+		return ""
+	}
+	rest := msg[idx+len(marker):]
+	end := strings.Index(rest, "\n\n")
+	if end == -1 {
+		return strings.TrimSpace(rest)
+	}
+	return strings.TrimSpace(rest[:end])
 }

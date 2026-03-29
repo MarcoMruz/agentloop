@@ -158,6 +158,10 @@ func (o *Orchestrator) Run(ctx context.Context, octx OrchestratorCtx, task strin
 	// Get memory context
 	memCtx := o.getMemoryContext(octx.UserID, task, octx.ConversationID)
 
+	if cb.OnText != nil {
+		cb.OnText("[agentloop] Planning...")
+	}
+
 	// Run planner
 	plan, err := o.runPlanner(ctx, octx, task, memCtx, plannerInstructions, nil, nil)
 	if err != nil {
@@ -175,6 +179,9 @@ func (o *Orchestrator) Run(ctx context.Context, octx OrchestratorCtx, task strin
 	// Single mode: delegate to Core.Run
 	if plan.Mode == "single" {
 		slog.Info("planner chose single mode", "orchestration_id", octx.OrchestrationID)
+		if cb.OnText != nil {
+			cb.OnText("[agentloop] Working...")
+		}
 		pb := NewPromptBuilder(o.memoryEngine)
 		core := New(octx.Config.Worker, o.secCfg, o.hitlCfg, pb, cb)
 		result := core.Run(ctx, octx.UserID, task, octx.WorkDir, sess)
@@ -199,8 +206,16 @@ func (o *Orchestrator) Run(ctx context.Context, octx OrchestratorCtx, task strin
 	for iteration := 1; iteration <= octx.Config.MaxIterations; iteration++ {
 		slog.Info("iteration starting", "orchestration_id", octx.OrchestrationID, "iteration", iteration)
 
+		if cb.OnText != nil {
+			cb.OnText(fmt.Sprintf("[agentloop] Running workers (iteration %d/%d, %d steps)...", iteration, octx.Config.MaxIterations, len(plan.Steps)))
+		}
+
 		// Dispatch workers concurrently
 		allSummaries := o.dispatchWorkers(ctx, octx, plan, memCtx, sess, cb)
+
+		if cb.OnText != nil {
+			cb.OnText(fmt.Sprintf("[agentloop] Evaluating results (iteration %d)...", iteration))
+		}
 
 		// Run judge
 		verdict := o.runJudge(ctx, octx, task, plan, allSummaries, judgeInstructions, iteration)
@@ -229,6 +244,10 @@ func (o *Orchestrator) Run(ctx context.Context, octx OrchestratorCtx, task strin
 			o.metaAgent.Evolve(ctx, taskOutcome)
 			evolutionCount++
 			iterations[len(iterations)-1].Evolved = true
+
+			if cb.OnText != nil {
+				cb.OnText("[agentloop] Replanning based on feedback...")
+			}
 
 			// Replan with judge feedback
 			plan, err = o.runPlanner(ctx, octx, task, memCtx, plannerInstructions, verdict, allSummaries)

@@ -136,24 +136,17 @@ func classifyToolCategory(title string) string {
 }
 
 // classifyRiskLevel determines the risk level from the title and rule.
-// When a TypeScript extension explicitly calls ctx.ui.confirm it is already
-// requesting human oversight, so anything we cannot classify as low/medium
-// should default to "high" (require human approval) rather than "low".
 func classifyRiskLevel(title, rule string) string {
 	lower := strings.ToLower(title + " " + rule)
 	switch {
 	case strings.Contains(lower, "dangerous") || strings.Contains(lower, "rm -rf") ||
-		strings.Contains(lower, "sudo") || strings.Contains(lower, "mkfs") ||
-		strings.Contains(lower, "high-risk") || strings.Contains(lower, "approval"):
+		strings.Contains(lower, "sudo") || strings.Contains(lower, "mkfs"):
 		return "high"
 	case strings.Contains(lower, "docker") || strings.Contains(lower, "environment") ||
-		strings.Contains(lower, "outside") || strings.Contains(lower, "path restriction") ||
-		strings.Contains(lower, "file operation") || strings.Contains(lower, "file path"):
+		strings.Contains(lower, "outside") || strings.Contains(lower, "path restriction"):
 		return "medium"
 	default:
-		// Unknown HITL titles: an extension explicitly called ctx.ui.confirm,
-		// meaning it decided human input is required. Treat as high.
-		return "high"
+		return "low"
 	}
 }
 

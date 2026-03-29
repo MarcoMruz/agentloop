@@ -79,6 +79,7 @@ type SecurityConfig struct {
 	Injection                InjectionConfig `mapstructure:"injection"`
 	PolicyMode               string          `mapstructure:"policy_mode"`
 	Tiers                    SecurityTiers   `mapstructure:"tiers"`
+	AutoApproveNonHigh       bool            `mapstructure:"auto_approve_non_high"`
 }
 
 type SecurityTiers struct {
@@ -184,6 +185,7 @@ func Defaults() *Config {
 			ForceHITLKeywords: []string{"sudo", "chmod", "chown", "systemctl", "npm install", "pip install", "yarn add"},
 		},
 		Security: SecurityConfig{
+			AutoApproveNonHigh:       true,
 			AllowedPaths:             []string{"~/projects", "~/tmp", "~/agentloop-sandbox"},
 			BlockedEnvPrefixes:       []string{"ANTHROPIC_", "OPENAI_", "BRAVE_SEARCH_", "N8N_WEBHOOK_", "AWS_SECRET", "GITHUB_TOKEN", "SECRET_KEY", "PRIVATE_KEY"},
 			BlockedCIDRs:             []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10"},

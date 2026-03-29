@@ -102,6 +102,7 @@ security:
 
   # Tiered Security Policy (NEW)
   policy_mode: selective # strict, selective, permissive
+  auto_approve_non_high: true # auto-approve HITL requests with riskLevel 'low' or 'medium'; only 'high' waits for human
 
   tiers:
     safe_operations:

@@ -51,8 +51,9 @@ type Callbacks struct {
 	OnHITLRequest func(details HITLRequestDetails)
 	OnDone        func(output string, stats RunStats)
 	OnError       func(msg string)
-	OnMemoryTool  bridge.MemoryToolHandler
-	OnSkillTool   bridge.SkillToolHandler
+	OnMemoryTool    bridge.MemoryToolHandler
+	OnSkillTool     bridge.SkillToolHandler
+	OnFeedbackTool  bridge.FeedbackToolHandler
 }
 
 // SessionInterface is the subset of Session needed by the agent core.
@@ -379,6 +380,10 @@ func (c *Core) Run(ctx context.Context, userId string, task string, workDir stri
 
 	if c.cb.OnSkillTool != nil {
 		b.SetSkillToolHandler(c.cb.OnSkillTool)
+	}
+
+	if c.cb.OnFeedbackTool != nil {
+		b.SetFeedbackToolHandler(c.cb.OnFeedbackTool)
 	}
 
 	// Start pi

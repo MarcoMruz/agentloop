@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/MarcoMruz/agentloop/internal/agent"
 	"github.com/MarcoMruz/agentloop/internal/bridge"
@@ -84,9 +85,10 @@ func NewManager(cfg *config.Config, v *vault.Vault, mem *memory.Engine, sk *skil
 	}
 }
 
-// SetMetricsCollector sets the evolution metrics collector.
+// SetMetricsCollector sets the evolution metrics collector and wires the evolution trigger.
 func (m *Manager) SetMetricsCollector(c *metrics.Collector) {
 	m.collector = c
+	m.wireEvolutionTrigger()
 }
 
 // SetPipeline sets the MemEvolve pipeline holder.
@@ -94,9 +96,58 @@ func (m *Manager) SetPipeline(p *evolve.PipelineHolder) {
 	m.pipeline = p
 }
 
-// SetMetaAgent sets the MemEvolve meta-evolution agent.
+// SetMetaAgent sets the MemEvolve meta-evolution agent and wires the evolution trigger.
 func (m *Manager) SetMetaAgent(ma *meta.MetaAgent) {
 	m.metaAgent = ma
+	m.wireEvolutionTrigger()
+}
+
+// wireEvolutionTrigger sets the Collector's evolution trigger whenever both collector
+// and metaAgent are available. Feedback-originated outcomes (Feedback != "") are routed
+// to EvolveFromFeedback; all other low-score outcomes go to Evolve.
+func (m *Manager) wireEvolutionTrigger() {
+	if m.collector == nil || m.metaAgent == nil {
+		return
+	}
+	ma := m.metaAgent
+	m.collector.SetEvolutionTrigger(func(outcome metrics.TaskOutcome) {
+		ctx := context.Background()
+		if outcome.Feedback != "" {
+			ma.EvolveFromFeedback(ctx, meta.UserFeedback{
+				Text:      outcome.Feedback,
+				UserID:    outcome.UserID,
+				SessionID: outcome.SessionID,
+			})
+		} else {
+			ma.Evolve(ctx, outcome)
+		}
+	})
+}
+
+// SubmitFeedback records explicit user feedback and triggers evolution.
+// It persists the feedback via the Collector (which applies rate-limiting before
+// firing the evolution trigger). If no Collector is configured, evolution is
+// triggered directly via MetaAgent.EvolveFromFeedback.
+func (m *Manager) SubmitFeedback(fb metrics.UserFeedback) error {
+	if fb.UserID == "" {
+		return fmt.Errorf("userId is required")
+	}
+	if fb.FeedbackText == "" {
+		return fmt.Errorf("feedback text is required")
+	}
+	if m.collector != nil {
+		m.collector.RecordFeedback(fb)
+		return nil
+	}
+	// No collector — trigger evolution directly (no rate limiting applied).
+	if m.metaAgent != nil {
+		go m.metaAgent.EvolveFromFeedback(context.Background(), meta.UserFeedback{
+			Text:      fb.FeedbackText,
+			UserID:    fb.UserID,
+			SessionID: fb.SessionID,
+		})
+	}
+	return nil
 }
 
 // SetSkillAgent sets the SkillAgent for LLM-driven skill selection.
@@ -281,6 +332,27 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 						}
 					}
 				}()
+			},
+			OnFeedbackTool: func(ev bridge.FeedbackToolEvent) {
+				userID := sess.UserID
+				if ev.UserID != "" {
+					userID = ev.UserID
+				}
+				sessionID := sess.ID
+				if ev.SessionID != "" {
+					sessionID = ev.SessionID
+				}
+				fb := metrics.UserFeedback{
+					SessionID:        sessionID,
+					UserID:           userID,
+					Timestamp:        time.Now(),
+					FeedbackText:     ev.Text,
+					Context:          ev.Context,
+					ExpectedBehavior: ev.ExpectedBehavior,
+				}
+				if err := m.SubmitFeedback(fb); err != nil {
+					slog.Warn("OnFeedbackTool: SubmitFeedback failed", "err", err, "userId", userID)
+				}
 			},
 			OnSkillTool: func(ev bridge.SkillToolEvent) {
 				if m.skillAgent == nil {

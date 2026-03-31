@@ -6,6 +6,18 @@ import (
 	"time"
 )
 
+// UserFeedback captures explicit negative feedback from a user about a completed task.
+type UserFeedback struct {
+	SessionID        string    `json:"session_id"`
+	UserID           string    `json:"user_id"`
+	Timestamp        time.Time `json:"timestamp"`
+	FeedbackText     string    `json:"feedback_text"`
+	Context          string    `json:"context"`           // what went wrong
+	ExpectedBehavior string    `json:"expected_behavior"` // what should have happened
+	TaskKeywords     []string  `json:"task_keywords"`
+	TaskTopics       []string  `json:"task_topics"`
+}
+
 type TaskOutcome struct {
 	SessionID     string        `json:"session_id"`
 	UserID        string        `json:"user_id"`
@@ -21,6 +33,7 @@ type TaskOutcome struct {
 	TaskTopics    []string      `json:"task_topics"`
 	SkillsUsed    []string      `json:"skills_used"`
 	PipelineID    string        `json:"pipeline_id"`
+	Feedback      string        `json:"feedback,omitempty"` // explicit negative feedback from user
 }
 
 func (o *TaskOutcome) Score() float64 {
@@ -38,6 +51,9 @@ func (o *TaskOutcome) Score() float64 {
 	}
 	if o.ToolCalls > 30 {
 		score -= 0.1
+	}
+	if o.Feedback != "" {
+		score -= 0.35
 	}
 	if score < 0.0 {
 		return 0.0

@@ -81,6 +81,19 @@ type SkillToolEvent struct {
 // SkillToolHandler is called when the Find_skill tool is invoked.
 type SkillToolHandler func(event SkillToolEvent)
 
+// FeedbackToolEvent is constructed when the bridge intercepts a tool_execution_start
+// for the Submit_feedback tool.
+type FeedbackToolEvent struct {
+	Text             string
+	Context          string
+	ExpectedBehavior string
+	SessionID        string
+	UserID           string
+}
+
+// FeedbackToolHandler is called synchronously when Submit_feedback is intercepted.
+type FeedbackToolHandler func(event FeedbackToolEvent)
+
 // ExtensionUIResponse is sent back to pi when a dialog extension_ui_request needs a reply.
 // UIMessageString extracts UIMessage as a plain string.
 // For extension_ui_request events the field is a JSON-encoded string; for

@@ -130,6 +130,9 @@ func (e *Engine) SetPipeline(p *evolve.PipelineHolder) {
 	e.pipeline = p
 }
 
+// Profiles returns the underlying ProfileStore.
+func (e *Engine) Profiles() *ProfileStore { return e.profiles }
+
 // SetNoteStore wires in an atomic notes store for vector-augmented retrieval.
 func (e *Engine) SetNoteStore(s notes.NoteStore) { e.noteStore = s }
 

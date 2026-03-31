@@ -6,11 +6,16 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/MarcoMruz/agentloop/internal/config"
 	"github.com/MarcoMruz/agentloop/internal/logging"
 	"github.com/MarcoMruz/agentloop/internal/memory"
+	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
+	"github.com/MarcoMruz/agentloop/internal/memory/evolve/baseline"
+	"github.com/MarcoMruz/agentloop/internal/memory/evolve/meta"
+	"github.com/MarcoMruz/agentloop/internal/memory/evolve/metrics"
 	"github.com/MarcoMruz/agentloop/internal/memory/llm"
 	"github.com/MarcoMruz/agentloop/internal/memory/notes"
 	"github.com/MarcoMruz/agentloop/internal/server"
@@ -74,7 +79,9 @@ func main() {
 	mem.SetLLMClient(llmClient)
 
 	// Atomic notes store (SQLite + sqlite-vec)
-	if sqliteStore, err := notes.NewSQLiteNoteStore(v.NotesDir(), cfg.Memory.EmbeddingDims); err == nil {
+	var sqliteStore *notes.SQLiteNoteStore
+	if s, err := notes.NewSQLiteNoteStore(v.NotesDir(), cfg.Memory.EmbeddingDims); err == nil {
+		sqliteStore = s
 		mem.SetNoteStore(sqliteStore)
 	} else {
 		slog.Warn("atomic notes store unavailable, running without it", "err", err)
@@ -102,6 +109,60 @@ func main() {
 	}
 	skillAgent := skills.NewSkillAgent(skillPiCfg, cfg.Security)
 	sm.SetSkillAgent(skillAgent)
+
+	// MemEvolve: pipeline, collector, and meta-agent
+	if cfg.Evolution.Enabled {
+		if err := evolve.EnsureEvolvedDirs(cfg.Vault.Path); err != nil {
+			slog.Warn("failed to create evolved dirs", "err", err)
+		} else {
+			profiles := mem.Profiles()
+			compactor := memory.NewCompactor(cfg.Memory.CompactionStrategy)
+
+			enc := baseline.NewBaselineEncoder(profiles)
+			stor := baseline.NewBaselineStorer(profiles, mem)
+			mgr := baseline.NewBaselineManager(compactor)
+
+			defaults := evolve.DefaultPipelineConfig()
+			var retr *baseline.BaselineRetriever
+			if sqliteStore != nil {
+				retr = baseline.NewBaselineRetriever(profiles, sqliteStore, &defaults.Retriever)
+			}
+
+			pipeline := evolve.NewPipelineHolder(cfg.Vault.Path, defaults, enc, stor, retr, mgr)
+			mem.SetPipeline(pipeline)
+
+			evolvedMetricsDir := filepath.Join(cfg.Vault.Path, "memory", "evolved")
+			collector := metrics.NewCollector(
+				evolvedMetricsDir,
+				cfg.Evolution.ScoreThreshold,
+				cfg.Evolution.MinCooldownSeconds,
+				cfg.Evolution.MaxDailyRuns,
+			)
+
+			agentsMDPath, _ := filepath.Abs("agents-md/AGENTS.md")
+			skillsPath := filepath.Join(cfg.Vault.Path, "skills")
+			metaAgent := meta.NewMetaAgent(
+				cfg.Vault.Path,
+				agentsMDPath,
+				skillsPath,
+				cfg.Pi,
+				cfg.Security,
+				cfg.Evolution,
+				pipeline,
+				mem,
+			)
+
+			sm.SetMetricsCollector(collector)
+			sm.SetPipeline(pipeline)
+			sm.SetMetaAgent(metaAgent)
+
+			slog.Info("MemEvolve enabled",
+				"score_threshold", cfg.Evolution.ScoreThreshold,
+				"cooldown_s", cfg.Evolution.MinCooldownSeconds,
+				"daily_cap", cfg.Evolution.MaxDailyRuns,
+			)
+		}
+	}
 
 	// Initialize server
 	handler := server.NewHandler(sm, mem)

@@ -29,6 +29,7 @@ type EvolutionPrompt struct {
 	AgentsMD            string
 	Constraints         []string
 	OrchestratorSignals *OrchestratorEvolutionSignals
+	UserFeedback        string
 }
 
 func BuildEvolutionPrompt(p EvolutionPrompt) string {
@@ -71,6 +72,16 @@ func BuildEvolutionPrompt(p EvolutionPrompt) string {
 			}
 		}
 		sb.WriteString("\n")
+	}
+
+	if p.UserFeedback != "" {
+		sb.WriteString("## User Feedback\n\n")
+		sb.WriteString(p.UserFeedback)
+		sb.WriteString("\n\n")
+		sb.WriteString("The user reported incorrect/unexpected results. Analyze what went wrong and propose changes that prevent this class of mistake in future tasks. Focus on:\n")
+		sb.WriteString("1) What knowledge was missing\n")
+		sb.WriteString("2) What rule/skill would prevent recurrence\n")
+		sb.WriteString("3) What notes to create for future context\n\n")
 	}
 
 	sb.WriteString("## Current Pipeline Configuration\n\n```json\n")

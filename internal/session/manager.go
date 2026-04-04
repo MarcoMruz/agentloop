@@ -25,6 +25,12 @@ type Broadcaster interface {
 	Broadcast(sessionId string, method string, params any)
 }
 
+// GlobalBroadcaster pushes notifications that are not scoped to a specific session.
+// The server implements this for system-wide events such as evolution completions.
+type GlobalBroadcaster interface {
+	BroadcastAll(method string, params any)
+}
+
 type StartRequest struct {
 	UserID       string
 	Text         string
@@ -49,21 +55,22 @@ func (r StartRequest) ComputeConversationContextID() string {
 }
 
 type Manager struct {
-	cfg        config.SessionConfig
-	piCfg      config.PiConfig
-	secCfg     config.SecurityConfig
-	hitlCfg    config.HITLConfig
-	orchCfg    config.OrchestratorConfig
-	vault      *vault.Vault
-	memory     *memory.Engine
-	skills     *skills.Registry
-	skillAgent *skills.SkillAgent
-	collector  *metrics.Collector
-	pipeline   *evolve.PipelineHolder
-	metaAgent  *meta.MetaAgent
-	sessions   map[string]*Session
-	userMap    map[string][]string // userId → active sessionIds
-	mu         sync.RWMutex
+	cfg               config.SessionConfig
+	piCfg             config.PiConfig
+	secCfg            config.SecurityConfig
+	hitlCfg           config.HITLConfig
+	orchCfg           config.OrchestratorConfig
+	vault             *vault.Vault
+	memory            *memory.Engine
+	skills            *skills.Registry
+	skillAgent        *skills.SkillAgent
+	collector         *metrics.Collector
+	pipeline          *evolve.PipelineHolder
+	metaAgent         *meta.MetaAgent
+	globalBroadcaster GlobalBroadcaster
+	sessions          map[string]*Session
+	userMap           map[string][]string // userId → active sessionIds
+	mu                sync.RWMutex
 }
 
 func NewManager(cfg *config.Config, v *vault.Vault, mem *memory.Engine, sk *skills.Registry) *Manager {
@@ -100,6 +107,41 @@ func (m *Manager) SetPipeline(p *evolve.PipelineHolder) {
 func (m *Manager) SetMetaAgent(ma *meta.MetaAgent) {
 	m.metaAgent = ma
 	m.wireEvolutionTrigger()
+	m.wireEvolutionComplete()
+}
+
+// SetGlobalBroadcaster sets the broadcaster used for non-session-scoped events
+// (e.g. event.evolution_complete). Safe to call after SetMetaAgent.
+func (m *Manager) SetGlobalBroadcaster(b GlobalBroadcaster) {
+	m.globalBroadcaster = b
+	m.wireEvolutionComplete()
+}
+
+// wireEvolutionComplete sets MetaAgent.OnComplete to broadcast event.evolution_complete
+// to all connected clients once an evolution finishes. Requires both metaAgent and
+// globalBroadcaster to be set; safe to call multiple times.
+func (m *Manager) wireEvolutionComplete() {
+	if m.metaAgent == nil || m.globalBroadcaster == nil {
+		return
+	}
+	gb := m.globalBroadcaster
+	m.metaAgent.OnComplete = func(userId, summary string, proposal meta.EvolutionProposal) {
+		skillCount := 0
+		for _, sc := range proposal.SkillChanges {
+			if sc.Action == "create" || sc.Action == "update" {
+				skillCount++
+			}
+		}
+		gb.BroadcastAll("event.evolution_complete", map[string]any{
+			"userId":       userId,
+			"summary":      summary,
+			"reasoning":    proposal.Reasoning,
+			"configChanged": proposal.ConfigChanges != nil,
+			"skillChanges": skillCount,
+			"noteCount":    len(proposal.NoteProposals),
+			"agentsMDChanged": proposal.AgentsMDPatch != "",
+		})
+	}
 }
 
 // wireEvolutionTrigger sets the Collector's evolution trigger whenever both collector

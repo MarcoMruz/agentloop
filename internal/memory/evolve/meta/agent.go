@@ -27,6 +27,10 @@ type UserFeedback struct {
 	SessionID string
 }
 
+// OnCompleteFunc is called after a successful evolution with the userId, summary,
+// and the full proposal. Use it to push event.evolution_complete to clients.
+type OnCompleteFunc func(userId, summary string, proposal EvolutionProposal)
+
 type MetaAgent struct {
 	mu           sync.Mutex
 	vaultPath    string
@@ -37,6 +41,8 @@ type MetaAgent struct {
 	evoCfg       config.EvolutionConfig
 	pipeline     *evolve.PipelineHolder
 	engine       *memory.Engine // nil = note proposals skipped
+	// OnComplete is called after each successful evolution. Optional.
+	OnComplete OnCompleteFunc
 }
 
 func NewMetaAgent(
@@ -143,6 +149,10 @@ func (m *MetaAgent) Evolve(ctx context.Context, outcome metrics.TaskOutcome, fee
 	}
 
 	slog.Info("evolution complete", "summary", proposal.Summary)
+
+	if m.OnComplete != nil {
+		m.OnComplete(outcome.UserID, proposal.Summary, *proposal)
+	}
 }
 
 

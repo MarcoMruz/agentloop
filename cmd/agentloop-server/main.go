@@ -168,6 +168,7 @@ func main() {
 	handler := server.NewHandler(sm, mem)
 	srv := server.New(expandHome(cfg.Server.SocketPath), handler)
 	handler.SetServer(srv)
+	sm.SetGlobalBroadcaster(srv)
 
 	// Graceful shutdown
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

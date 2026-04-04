@@ -139,6 +139,16 @@ func (s *Server) Broadcast(sessionId string, method string, params any) {
 	}
 }
 
+// BroadcastAll sends a notification to every connected client regardless of session subscriptions.
+// Used for global system events such as evolution completions.
+func (s *Server) BroadcastAll(method string, params any) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, client := range s.clients {
+		client.SendNotification(method, params)
+	}
+}
+
 func (s *Server) Stop() {
 	if s.listener != nil {
 		s.listener.Close()

@@ -61,5 +61,6 @@ User says "we migrated from Django to FastAPI":
 - `tags`: category labels — "preference", "tool", "project", "workflow"
 
 <!-- EVOLVED:START -->
-- When outputting structured JSON (especially for MemEvolve), provide only clean, valid JSON without markdown formatting or extra text to prevent parser stripping
+- When users request specific deliverables (links, files, reports), always provide the exact items requested and explicitly confirm delivery
+- Never consider a task complete until all requested deliverables have been provided to the user
 <!-- EVOLVED:END -->

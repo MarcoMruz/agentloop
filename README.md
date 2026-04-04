@@ -240,6 +240,75 @@ This is valid Obsidian-compatible Markdown. Open your vault directory in Obsidia
 
 ---
 
+## Slack Integration
+
+AgentLoop ships with a Slack bridge (`agentloop-slack`, separate Node.js repo) that connects the server to a Slack workspace. The bridge is a thin transport layer — all intelligence, memory, and session logic remain in the Go server.
+
+### What you can do from Slack
+
+| Action | How | What happens |
+|--------|-----|-------------|
+| Start a task | DM the bot or @mention it | `task.start` → AgentLoop, streams output in thread |
+| Set work directory | Prefix message with `in ~/myproject` | Agent runs in the specified directory |
+| Steer a running task | Reply in the task's thread | `task.steer` redirects the running agent |
+| Approve/deny tool use | Click buttons in Slack | `hitl.respond` relays your decision |
+| Abort a task | `/abort` or click Abort button | `task.abort` stops the agent |
+| List active sessions | `/sessions` | Shows your active sessions |
+| Start task via command | `/task fix the login bug` | Triggers from any channel |
+| Submit feedback | Prefix with `feedback:` or `/feedback` | Persists feedback + triggers MemEvolve |
+| Check weather | `/weather Bratislava` | Direct API call, no agent |
+
+### Auto-Approval (Tiered Security)
+
+The server supports a tiered HITL policy (`auto_approve_non_high: true` in config). When enabled, low- and medium-risk tool calls are auto-approved and the bridge posts a compact `✅ Auto-approved: \`toolName\`` notice in the thread. Only high-risk operations pause for human approval. This dramatically reduces approval fatigue for routine operations.
+
+Configure the tier in `agentloop.yaml`:
+
+```yaml
+security:
+  auto_approve_non_high: true   # auto-approve low/medium risk; only high waits
+  policy_mode: selective        # strict | selective | permissive
+  tiers:
+    safe_operations:
+      bash_patterns: ["^ls\\b", "^cat\\b", "^grep\\b", ...]
+    logged_operations:
+      tools: [write, edit]
+    hitl_required:
+      bash_patterns: ["\\bsudo\\b", "\\brm\\b.*-r", ...]
+    always_blocked:
+      bash_patterns: ["rm -rf /", "mkfs", ...]
+```
+
+### Slack Assistant
+
+The bridge also registers as a Slack **Assistant** (via Bolt's `Assistant` API), making it available in the Slack sidebar as an AI assistant panel. When the assistant panel is opened:
+- An initial title and suggested prompts are set automatically
+- Messages in the assistant thread behave identically to DMs — tasks start, stream back, and support steering and HITL
+- The assistant status indicator updates per tool use ("is using bash…")
+
+This requires the `assistant:write` scope and the **Agents & AI Apps** feature enabled in your Slack app settings.
+
+### Setup Overview
+
+1. Build and start the AgentLoop server (see [Installation](#installation))
+2. Clone `agentloop-slack` and configure `.env` with your Slack tokens
+3. Run `npm install && npm run dev` (or use PM2 for production)
+
+Full setup guide including Slack app creation, scope configuration, slash command registration, and PM2 deployment is in the `agentloop-slack` repo's `README.md`.
+
+### Feedback Routing
+
+Clients that only send `task.start` (e.g., bots, bridges) can route feedback without a dedicated API call by prefixing the task text:
+
+```
+feedback: the agent deleted the wrong file
+/feedback response was too verbose
+```
+
+The server strips the prefix and routes directly to `feedback.submit` + MemEvolve, bypassing agent session creation.
+
+---
+
 ## Project Structure — Start Here
 
 Read these files first when getting familiar with the codebase:
@@ -299,9 +368,20 @@ agentloop/
 │   │
 │   └── ... (hitl, errors, logging packages)
 │
+├── docs/
+│   └── integrations/
+│       └── zed-acp.md                     ← Zed editor ACP integration guide
+│
 └── extensions/
     ├── security-policy.ts                 ← Bash command validation, path enforcement
-    └── docker-guard.ts                    ← Docker subcommand + volume validation
+    ├── selective-security-policy.ts       ← Tiered HITL policy (low/medium auto-approve)
+    ├── docker-guard.ts                    ← Docker subcommand + volume validation
+    ├── prompt-injection-guard.ts          ← Prompt injection detection + sanitization
+    ├── memory-tools.ts                    ← Add/Update/Delete/Retrieve_memory tools
+    ├── skill-tools.ts                     ← Find_skill tool (LLM-driven skill selection)
+    ├── feedback-tools.ts                  ← Submit_feedback tool → MemEvolve
+    ├── force-hitl.ts                      ← Force HITL for specific patterns
+    └── vault-skills.ts                    ← Vault skill loading support
 ```
 
 **Recommended reading order:**
@@ -465,13 +545,13 @@ For full config documentation, see `configs/agentloop.yaml`. Below are the main 
    ---
    name: My Skill Name
    description: What this skill does
-   triggers:
+   tags:
      - keyword1
      - keyword2
    ---
    ```
 3. Add markdown instructions below the frontmatter
-4. Skills are auto-loaded by `memory/engine.go` — no server restart needed
+4. Skills are loaded by `skills/registry.go` at server startup — restart required to pick up new skills
 
 ### Security changes
 
@@ -491,12 +571,25 @@ See `CLAUDE.md` for the complete development guide.
 
 ---
 
+## Integrations
+
+AgentLoop is a server that any client can connect to over the Unix socket. All integrations use the same JSON-RPC 2.0 protocol.
+
+| Client | Source tag | Description |
+|--------|-----------|-------------|
+| [CLI](README.md#usage) | `cli` | `agentloop "task"` — bundled Go binary |
+| [Slack bridge](https://github.com/user/agentloop-slack) | `slack` | Submit tasks and receive output in Slack; HITL via interactive messages |
+| [Zed ACP](docs/integrations/zed-acp.md) | `zed-acp` | AgentLoop as Zed editor's external AI agent via Agent Control Protocol |
+
+The `source` field is set by each client in `task.start` and stored in every vault session — filter `~/.local/share/agentloop/vault/sessions/` by `source:` to see sessions from a specific client.
+
+---
+
 ## Roadmap
 
 Planned features for future releases:
 
 - **Web UI** — dashboard to view active sessions, memory profiles, vault browser
-- **Slack integration** — submit tasks via Slack, receive HITL approvals, session summaries in Slack
 - **Session resume** — load a previous session's state and continue interrupted work
 - **Multi-agent coordination** — orchestrate multiple agents working on decomposed tasks
 - **Advanced memory strategies** — LLM-powered summarization, topic clustering, automated fact extraction

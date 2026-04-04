@@ -1,15 +1,15 @@
 package config
 
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	Pi       PiConfig       `mapstructure:"pi"`
-	Vault    VaultConfig    `mapstructure:"vault"`
-	Memory   MemoryConfig   `mapstructure:"memory"`
-	Sessions SessionConfig  `mapstructure:"sessions"`
-	HITL     HITLConfig     `mapstructure:"hitl"`
-	Security SecurityConfig `mapstructure:"security"`
-	Skills   SkillsConfig   `mapstructure:"skills"`
-	Logging   LoggingConfig   `mapstructure:"logging"`
+	Server       ServerConfig       `mapstructure:"server"`
+	Pi           PiConfig           `mapstructure:"pi"`
+	Vault        VaultConfig        `mapstructure:"vault"`
+	Memory       MemoryConfig       `mapstructure:"memory"`
+	Sessions     SessionConfig      `mapstructure:"sessions"`
+	HITL         HITLConfig         `mapstructure:"hitl"`
+	Security     SecurityConfig     `mapstructure:"security"`
+	Skills       SkillsConfig       `mapstructure:"skills"`
+	Logging      LoggingConfig      `mapstructure:"logging"`
 	Evolution    EvolutionConfig    `mapstructure:"evolution"`
 	Orchestrator OrchestratorConfig `mapstructure:"orchestrator"`
 }
@@ -43,14 +43,14 @@ type MemoryAgentConfig struct {
 }
 
 type MemoryConfig struct {
-	MaxProfileEntries      int                `mapstructure:"max_profile_entries"`
-	ConversationRetainDays int                `mapstructure:"conversation_retain_days"`
-	CompactionThreshold    int                `mapstructure:"compaction_threshold"`
-	CompactionStrategy     string             `mapstructure:"compaction_strategy"`
-	MaxContextTokens       int                `mapstructure:"max_context_tokens"`
-	PromptCacheTTLMinutes  int                `mapstructure:"prompt_cache_ttl_minutes"`
-	EmbeddingDims          int                `mapstructure:"embedding_dims"`
-	Agent                  MemoryAgentConfig  `mapstructure:"agent"`
+	MaxProfileEntries      int               `mapstructure:"max_profile_entries"`
+	ConversationRetainDays int               `mapstructure:"conversation_retain_days"`
+	CompactionThreshold    int               `mapstructure:"compaction_threshold"`
+	CompactionStrategy     string            `mapstructure:"compaction_strategy"`
+	MaxContextTokens       int               `mapstructure:"max_context_tokens"`
+	PromptCacheTTLMinutes  int               `mapstructure:"prompt_cache_ttl_minutes"`
+	EmbeddingDims          int               `mapstructure:"embedding_dims"`
+	Agent                  MemoryAgentConfig `mapstructure:"agent"`
 }
 
 type SessionConfig struct {
@@ -64,10 +64,10 @@ type SessionConfig struct {
 }
 
 type HITLConfig struct {
-	AlwaysPauseTools   []string `mapstructure:"always_pause_tools"`
-	TimeoutSeconds     int      `mapstructure:"timeout_seconds"`
-	TimeoutAction      string   `mapstructure:"timeout_action"`
-	ForceHITLKeywords  []string `mapstructure:"force_hitl_keywords"`
+	AlwaysPauseTools  []string `mapstructure:"always_pause_tools"`
+	TimeoutSeconds    int      `mapstructure:"timeout_seconds"`
+	TimeoutAction     string   `mapstructure:"timeout_action"`
+	ForceHITLKeywords []string `mapstructure:"force_hitl_keywords"`
 }
 
 // ReadonlySessionConfig controls HITL auto-approval in internal read-only pi
@@ -78,15 +78,15 @@ type ReadonlySessionConfig struct {
 }
 
 type SecurityConfig struct {
-	AllowedPaths             []string             `mapstructure:"allowed_paths"`
-	BlockedEnvPrefixes       []string             `mapstructure:"blocked_env_prefixes"`
-	BlockedCIDRs             []string             `mapstructure:"blocked_cidrs"`
-	DockerAllowedSubcommands []string             `mapstructure:"docker_allowed_subcommands"`
-	DockerBlockedVolumePaths []string             `mapstructure:"docker_blocked_volume_paths"`
-	Injection                InjectionConfig      `mapstructure:"injection"`
-	PolicyMode               string               `mapstructure:"policy_mode"`
-	Tiers                    SecurityTiers        `mapstructure:"tiers"`
-	AutoApproveNonHigh       bool                 `mapstructure:"auto_approve_non_high"`
+	AllowedPaths             []string              `mapstructure:"allowed_paths"`
+	BlockedEnvPrefixes       []string              `mapstructure:"blocked_env_prefixes"`
+	BlockedCIDRs             []string              `mapstructure:"blocked_cidrs"`
+	DockerAllowedSubcommands []string              `mapstructure:"docker_allowed_subcommands"`
+	DockerBlockedVolumePaths []string              `mapstructure:"docker_blocked_volume_paths"`
+	Injection                InjectionConfig       `mapstructure:"injection"`
+	PolicyMode               string                `mapstructure:"policy_mode"`
+	Tiers                    SecurityTiers         `mapstructure:"tiers"`
+	AutoApproveNonHigh       bool                  `mapstructure:"auto_approve_non_high"`
 	ReadonlySessions         ReadonlySessionConfig `mapstructure:"readonly_sessions"`
 }
 
@@ -98,10 +98,10 @@ type SecurityTiers struct {
 }
 
 type TierOperations struct {
-	BashPatterns    []string `mapstructure:"bash_patterns"`
-	Tools           []string `mapstructure:"tools"`
-	DockerCommands  []string `mapstructure:"docker_commands"`
-	VolumeMounts    []string `mapstructure:"volume_mounts"`
+	BashPatterns   []string `mapstructure:"bash_patterns"`
+	Tools          []string `mapstructure:"tools"`
+	DockerCommands []string `mapstructure:"docker_commands"`
+	VolumeMounts   []string `mapstructure:"volume_mounts"`
 }
 
 type InjectionConfig struct {
@@ -123,7 +123,7 @@ type SkillAgentConfig struct {
 }
 
 type SkillsConfig struct {
-	SkillDirs []string        `mapstructure:"skill_dirs"`
+	SkillDirs []string         `mapstructure:"skill_dirs"`
 	Agent     SkillAgentConfig `mapstructure:"agent"`
 }
 
@@ -156,10 +156,10 @@ func Defaults() *Config {
 	return &Config{
 		Server: ServerConfig{SocketPath: "~/.local/share/agentloop/agentloop.sock"},
 		Pi: PiConfig{
-			Binary:    "pi",
-			Provider:  "anthropic",
-			Model:     "claude-sonnet-4-20250514",
-			NoSkills:  true,
+			Binary:   "pi",
+			Provider: "anthropic",
+			Model:    "claude-sonnet-4-6",
+			NoSkills: true,
 		},
 		Vault: VaultConfig{Path: "~/.local/share/agentloop/vault"},
 		Memory: MemoryConfig{

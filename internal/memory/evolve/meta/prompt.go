@@ -110,28 +110,51 @@ func BuildEvolutionPrompt(p EvolutionPrompt) string {
 	sb.WriteString("\n")
 
 	sb.WriteString("## Required Response Format\n\n")
-	sb.WriteString("Respond with a single JSON object:\n\n```json\n")
+	sb.WriteString("Respond with a single JSON object. All fields are required, use null or empty arrays/strings if no changes are needed.\n\n```json\n")
 	sb.WriteString(`{
-  "reasoning": "Why these changes will help",
-  "config_changes": { ... pipeline config fields to change ... },
+  "reasoning": "Explain why these changes will help improve task outcomes",
+  "config_changes": {
+    "version": 2,
+    "retriever": {
+      "keyword_weight": 0.4,
+      "topic_weight": 0.6,
+      "max_results": 10,
+      "position": "edges"
+    }
+  },
   "skill_changes": [
-    {"action": "create|update|delete", "name": "evolved-NAME", "triggers": [...], "description": "...", "content": "..."}
-  ],
-  "agents_md_patch": "New content for the EVOLVED section (or empty)",
-  "note_proposals": [
     {
-      "content": "Full atomic note body. One idea only. State what was learned, what the correct pattern is, and when to apply it.",
-      "keywords": ["exact-lowercase-terms", "used-in-retrieval"],
-      "tags": ["topic-from-taxonomy"],
-      "description": "One-line summary of the learned knowledge, ≤120 chars"
+      "action": "create",
+      "name": "evolved-example-skill",
+      "triggers": ["example", "demo"],
+      "description": "Example skill description",
+      "content": "# Example Skill\n\nSkill instructions here."
     }
   ],
-  "summary": "One-line summary for git commit",
+  "agents_md_patch": "## New Pattern\n\n- Bullet point with learned behavior",
+  "note_proposals": [
+    {
+      "content": "Complete note body stating what was learned and when to apply it. One atomic idea only.",
+      "keywords": ["exact", "lowercase", "retrieval", "terms"],
+      "tags": ["relevant-topic-from-taxonomy"],
+      "description": "One-line summary of the knowledge (≤120 chars)"
+    }
+  ],
+  "summary": "Brief git commit message describing the evolution",
   "orchestrator_patches": [
-    {"role": "planner|worker|judge", "content": "Evolved instructions (abstract, project-agnostic)"}
+    {
+      "role": "worker",
+      "content": "Updated instructions for worker agents to improve execution patterns"
+    }
   ]
 }`)
-	sb.WriteString("\n```\n")
+	sb.WriteString("\n```\n\n")
+	sb.WriteString("**IMPORTANT JSON Requirements:**\n")
+	sb.WriteString("- Provide exactly one valid JSON object\n")
+	sb.WriteString("- All fields are required (use null, empty string \"\", or empty array [] if no changes)\n")
+	sb.WriteString("- No trailing commas\n")
+	sb.WriteString("- Use proper JSON syntax - all strings must be quoted\n")
+	sb.WriteString("- Set config_changes to null if no pipeline changes are needed\n")
 
 	return sb.String()
 }

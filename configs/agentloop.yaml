@@ -286,6 +286,23 @@ security:
     max_content_length: 50000 # 50KB max content size
     detection_threshold: 0.7 # 70% confidence threshold
 
+orchestrator:
+  planner:
+    binary: pi
+    provider: anthropic
+    model: claude-opus-4-6
+  worker:
+    binary: pi
+    provider: anthropic
+    model: claude-haiku-4-5
+  judge:
+    binary: pi
+    provider: anthropic
+    model: claude-sonnet-4-6
+  worker_pool_size: 4
+  max_iterations: 3
+  summary_max_tokens: 1500
+
 skills:
   skill_dirs:
     - ~/.local/share/agentloop/vault/skills

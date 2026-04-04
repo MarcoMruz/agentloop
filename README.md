@@ -370,8 +370,6 @@ agentloop/
 │
 ├── docs/
 │   └── integrations/
-│       └── zed-acp.md                     ← Zed editor ACP integration guide
-│
 └── extensions/
     ├── security-policy.ts                 ← Bash command validation, path enforcement
     ├── selective-security-policy.ts       ← Tiered HITL policy (low/medium auto-approve)
@@ -579,7 +577,6 @@ AgentLoop is a server that any client can connect to over the Unix socket. All i
 |--------|-----------|-------------|
 | [CLI](README.md#usage) | `cli` | `agentloop "task"` — bundled Go binary |
 | [Slack bridge](https://github.com/user/agentloop-slack) | `slack` | Submit tasks and receive output in Slack; HITL via interactive messages |
-| [Zed ACP](docs/integrations/zed-acp.md) | `zed-acp` | AgentLoop as Zed editor's external AI agent via Agent Control Protocol |
 
 The `source` field is set by each client in `task.start` and stored in every vault session — filter `~/.local/share/agentloop/vault/sessions/` by `source:` to see sessions from a specific client.
 

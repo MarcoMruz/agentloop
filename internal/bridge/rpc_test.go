@@ -163,6 +163,52 @@ func TestSkillToolHandlerRegistration(t *testing.T) {
 	_ = b
 }
 
+func TestFeedbackToolHandlerRegistration(t *testing.T) {
+	b := New(config.PiConfig{}, config.SecurityConfig{}, config.HITLConfig{})
+	called := false
+	b.SetFeedbackToolHandler(func(ev FeedbackToolEvent) {
+		called = true
+	})
+	_ = called
+	_ = b
+}
+
+func TestFeedbackToolEventFromArgs(t *testing.T) {
+	args := map[string]any{
+		"text":              "agent gave wrong output",
+		"context":           "refactoring task",
+		"expected_behavior": "should have kept tests passing",
+		"session_id":        "sess-abc123",
+		"user_id":           "marco",
+	}
+	ev := feedbackToolEventFromArgs(args)
+	if ev.Text != "agent gave wrong output" {
+		t.Errorf("Text: %q", ev.Text)
+	}
+	if ev.Context != "refactoring task" {
+		t.Errorf("Context: %q", ev.Context)
+	}
+	if ev.ExpectedBehavior != "should have kept tests passing" {
+		t.Errorf("ExpectedBehavior: %q", ev.ExpectedBehavior)
+	}
+	if ev.SessionID != "sess-abc123" {
+		t.Errorf("SessionID: %q", ev.SessionID)
+	}
+	if ev.UserID != "marco" {
+		t.Errorf("UserID: %q", ev.UserID)
+	}
+}
+
+func TestFeedbackToolEventFromArgsMissing(t *testing.T) {
+	ev := feedbackToolEventFromArgs(map[string]any{"text": "some feedback"})
+	if ev.Text != "some feedback" {
+		t.Errorf("Text: %q", ev.Text)
+	}
+	if ev.Context != "" || ev.ExpectedBehavior != "" || ev.SessionID != "" || ev.UserID != "" {
+		t.Error("missing fields should be empty strings")
+	}
+}
+
 func TestSkillToolEventFields(t *testing.T) {
 	ev := SkillToolEvent{
 		Tool:          "Find_skill",

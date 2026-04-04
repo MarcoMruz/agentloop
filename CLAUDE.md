@@ -85,7 +85,10 @@ Socket path: `~/.local/share/agentloop/agentloop.sock`
 | `session.list` | `{userId?, status?}` | List sessions |
 | `memory.get` | `{userId}` | Get user's memory context |
 | `memory.update` | `{userId, key, value}` | Update a user fact |
+| `feedback.submit` | `{userId, text, sessionId?, context?, expectedBehavior?}` | Submit explicit user feedback; persists it and triggers MemEvolve evolution |
 | `health.check` | `{}` | Server health + active session count |
+
+> **Feedback prefix routing** — Clients that only support `task.start` (e.g. Slack bridges) can prefix the task text with `"feedback:"` or `"/feedback "` (case-insensitive) to route to `feedback.submit` logic instead of starting a new agent session. The handler strips the prefix and delegates to the same feedback persistence + MemEvolve trigger path.
 
 **Server → Client (Notifications):**
 
@@ -254,7 +257,8 @@ agentloop/
 │   ├── security-policy.ts
 │   ├── docker-guard.ts
 │   ├── memory-tools.ts             # Add_memory, Update_memory, Delete_memory, Retrieve_memory tools
-│   └── skill-tools.ts              # Find_skill tool for LLM-driven skill selection
+│   ├── skill-tools.ts              # Find_skill tool for LLM-driven skill selection
+│   └── feedback-tools.ts           # Submit_feedback tool — routes feedback to Go bridge → MemEvolve
 │
 ├── agents-md/
 │   └── AGENTS.md                   # Instructions pi loads for agent behavior
@@ -336,12 +340,17 @@ go test ./internal/bridge/... -v
 | `TestScoreSteers` | `internal/memory/evolve/metrics/outcome_test.go` | Each steer deducts 0.20 |
 | `TestScoreAbortedTask` | `internal/memory/evolve/metrics/outcome_test.go` | Aborted status deducts 0.30 |
 | `TestScoreFloor` | `internal/memory/evolve/metrics/outcome_test.go` | Score never goes below 0.0 |
+| `TestScoreWithFeedback` | `internal/memory/evolve/metrics/outcome_test.go` | Negative explicit feedback lowers score |
+| `TestScoreWithFeedbackAndOtherPenalties` | `internal/memory/evolve/metrics/outcome_test.go` | Feedback penalty stacks with other deductions |
 | `TestClusterBySharedTopic` | `internal/memory/evolve/metrics/cluster_test.go` | Outcomes grouped by shared topic |
 | `TestClusterConnectedComponents` | `internal/memory/evolve/metrics/cluster_test.go` | Transitive topic links form one cluster |
 | `TestClusterNoTopicsFallsBackToKeywords` | `internal/memory/evolve/metrics/cluster_test.go` | Keyword overlap used when topics absent |
 | `TestCollectorPersist` | `internal/memory/evolve/metrics/collector_test.go` | Outcomes written to JSONL |
 | `TestCollectorRateLimitingCooldown` | `internal/memory/evolve/metrics/collector_test.go` | Cooldown blocks re-trigger |
 | `TestCollectorRateLimitingDailyCap` | `internal/memory/evolve/metrics/collector_test.go` | Daily cap respected |
+| `TestCollectorRecordFeedback` | `internal/memory/evolve/metrics/collector_test.go` | Explicit feedback persisted to JSONL |
+| `TestCollectorFeedbackTriggersEvolution` | `internal/memory/evolve/metrics/collector_test.go` | Negative feedback triggers evolution callback |
+| `TestCollectorFeedbackRespectsRateLimit` | `internal/memory/evolve/metrics/collector_test.go` | Feedback evolution respects cooldown rate limit |
 | `TestApplierAgentsMDMarkerProtection` | `internal/memory/evolve/meta/applier_test.go` | Only `EVOLVED:START/END` section overwritten |
 | `TestApplierAgentsMDCreatesMarkers` | `internal/memory/evolve/meta/applier_test.go` | Markers appended when absent from AGENTS.md |
 | `TestApplierSkillNamespacing` | `internal/memory/evolve/meta/applier_test.go` | Evolved skills prefixed `evolved-` |
@@ -383,6 +392,9 @@ go test ./internal/bridge/... -v
 | `TestSkillAgentFindEmptyCatalog` | `internal/skills/agent_test.go` | Empty catalog short-circuits without calling pi |
 | `TestSkillAgentConfigDefaults` | `internal/config/config_test.go` | SkillAgentConfig fields default to empty (inherit from pi) |
 | `TestSkillToolHandlerRegistration` | `internal/bridge/rpc_test.go` | SetSkillToolHandler registers callback |
+| `TestFeedbackToolHandlerRegistration` | `internal/bridge/rpc_test.go` | SetFeedbackToolHandler registers callback |
+| `TestFeedbackToolEventFromArgs` | `internal/bridge/rpc_test.go` | FeedbackToolEvent correctly parsed from tool args map |
+| `TestFeedbackToolEventFromArgsMissing` | `internal/bridge/rpc_test.go` | Missing tool args produce zero-value FeedbackToolEvent (no panic) |
 | `TestRunTextSessionSignature` | `internal/pirun/pirun_test.go` | RunTextSession signature and basic behavior |
 
 ### Test Conventions
@@ -655,6 +667,8 @@ Skills are on-demand instruction sets loaded from the vault. Each skill director
 
 **`Find_skill` tool** — a pi tool (registered via `SetSkillToolHandler` on the bridge) that triggers skill selection at runtime. When pi calls `Find_skill`, the Go bridge invokes `SkillAgent.Find()` and returns the result to the main agent, which can then load and apply the skill's instructions and files.
 
+**`Submit_feedback` tool** — a pi tool intercepted by the bridge via `SetFeedbackToolHandler`. When pi calls `Submit_feedback` (via `feedback-tools.ts`), the bridge fires `FeedbackToolEvent{Text, SessionID, Context, ExpectedBehavior}` synchronously to the Go handler. The `agent.Core` handler persists the feedback, enriches the matching `TaskOutcome`, and fires the MemEvolve evolution callback if the score falls below threshold. This enables the agent to self-report feedback mid-session without the user going through the socket API directly.
+
 **`AGENTLOOP_SKILL_LOAD_PATH`** env var — used for IPC when the skill tool result needs to be written to a temp file path for the main pi session to read.
 
 ### `internal/vault` — Session Persistence
@@ -789,6 +803,7 @@ Extensions are TypeScript files in `extensions/` that pi loads via the `-e` flag
 | `prompt-injection-guard.ts` | Permission gate | Detects prompt injection attempts from risky sources |
 | `memory-tools.ts` | Custom tools | Exposes `Add_memory`, `Update_memory`, `Delete_memory`, `Retrieve_memory` tools to pi |
 | `skill-tools.ts` | Custom tools | Exposes `Find_skill` tool — LLM-driven skill selection at runtime |
+| `feedback-tools.ts` | Custom tools | Exposes `Submit_feedback` tool — intercepted by Go bridge, persisted, triggers MemEvolve |
 
 ### Extension Environment Variables
 

@@ -2,6 +2,7 @@ package meta
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
 )
@@ -45,6 +46,7 @@ type SkillSummary struct {
 }
 
 func ParseProposal(text string) (*EvolutionProposal, error) {
+	// Find the JSON object boundaries
 	start := -1
 	end := -1
 	depth := 0
@@ -64,12 +66,44 @@ func ParseProposal(text string) (*EvolutionProposal, error) {
 		}
 	}
 	if start == -1 || end == -1 {
-		return nil, &json.SyntaxError{}
+		return nil, fmt.Errorf("no complete JSON object found in response (start: %d, end: %d)", start, end)
 	}
 
+	jsonText := text[start:end]
+	
+	// Try to parse the JSON
 	var proposal EvolutionProposal
-	if err := json.Unmarshal([]byte(text[start:end]), &proposal); err != nil {
-		return nil, err
+	if err := json.Unmarshal([]byte(jsonText), &proposal); err != nil {
+		// Provide more helpful error context
+		return nil, fmt.Errorf("JSON parse error: %w\nJSON content: %s", err, truncateJSON(jsonText))
 	}
+	
+	// Validate required fields and provide defaults
+	if proposal.Summary == "" {
+		proposal.Summary = "MemEvolve update"
+	}
+	if proposal.Reasoning == "" {
+		proposal.Reasoning = "Analysis of task outcomes and proposed improvements"
+	}
+	
+	// Ensure slices are not nil
+	if proposal.SkillChanges == nil {
+		proposal.SkillChanges = []SkillProposal{}
+	}
+	if proposal.NoteProposals == nil {
+		proposal.NoteProposals = []NoteProposal{}
+	}
+	if proposal.OrchestratorPatches == nil {
+		proposal.OrchestratorPatches = []OrchestratorPatch{}
+	}
+	
 	return &proposal, nil
+}
+
+// truncateJSON truncates JSON for error messages while preserving structure info
+func truncateJSON(jsonText string) string {
+	if len(jsonText) <= 200 {
+		return jsonText
+	}
+	return jsonText[:200] + "..."
 }

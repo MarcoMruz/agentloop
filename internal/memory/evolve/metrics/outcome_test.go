@@ -81,6 +81,28 @@ func TestScoreCombined(t *testing.T) {
 	}
 }
 
+func TestScoreWithFeedback(t *testing.T) {
+	o := TaskOutcome{FinalStatus: "done", Feedback: "agent ignored my instructions"}
+	expected := 0.65
+	if s := o.Score(); s != expected {
+		t.Fatalf("expected %f, got %f", expected, s)
+	}
+}
+
+func TestScoreWithFeedbackAndOtherPenalties(t *testing.T) {
+	o := TaskOutcome{
+		FinalStatus: "done",
+		HITLDenials: 1,
+		SteerCount:  1,
+		Feedback:    "completely wrong approach",
+	}
+	// 1.0 - 0.25 (hitl) - 0.20 (steer) - 0.35 (feedback) = 0.20
+	expected := 0.20
+	if s := o.Score(); s != expected {
+		t.Fatalf("expected %f, got %f", expected, s)
+	}
+}
+
 func TestOutcomeJSONRoundTrip(t *testing.T) {
 	o := TaskOutcome{
 		SessionID:   "sess-abc",

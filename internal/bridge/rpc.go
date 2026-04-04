@@ -36,9 +36,10 @@ type PiBridge struct {
 	mu           sync.Mutex
 	onEvent      EventHandler
 	onHITL       HITLHandler
-	onMemoryTool  MemoryToolHandler
-	onSkillTool   SkillToolHandler
-	done          chan struct{}
+	onMemoryTool    MemoryToolHandler
+	onSkillTool     SkillToolHandler
+	onFeedbackTool  FeedbackToolHandler
+	done            chan struct{}
 	retrievePath  string // per-session temp file for Retrieve_memory results
 	skillLoadPath string // per-session temp file for Find_skill result
 }
@@ -64,6 +65,9 @@ func (b *PiBridge) SetMemoryToolHandler(h MemoryToolHandler) { b.onMemoryTool = 
 
 // SetSkillToolHandler registers the callback for Find_skill tool interception.
 func (b *PiBridge) SetSkillToolHandler(h SkillToolHandler) { b.onSkillTool = h }
+
+// SetFeedbackToolHandler registers the callback for Submit_feedback tool interception.
+func (b *PiBridge) SetFeedbackToolHandler(h FeedbackToolHandler) { b.onFeedbackTool = h }
 
 // Start launches the pi subprocess in RPC mode.
 func (b *PiBridge) Start(ctx context.Context, workDir string) error {
@@ -262,6 +266,14 @@ func (b *PiBridge) readEvents() {
 			continue // Do NOT forward to onEvent
 		}
 
+		// Feedback tool interception: Submit_feedback is handled by the Go side
+		if event.Type == "tool_execution_start" && event.ToolName == "Submit_feedback" {
+			if b.onFeedbackTool != nil {
+				b.onFeedbackTool(feedbackToolEventFromArgs(event.Args))
+			}
+			continue // Do NOT forward to onEvent
+		}
+
 		// Dispatch to event handler
 		if b.onEvent != nil {
 			if err := b.onEvent(event); err != nil {
@@ -343,6 +355,24 @@ func memoryToolEventFromArgs(toolName string, args map[string]any, retrievePath 
 		Query:        strVal("query"),
 		TopK:         intVal("top_k"),
 		RetrievePath: retrievePath,
+	}
+}
+
+func feedbackToolEventFromArgs(args map[string]any) FeedbackToolEvent {
+	strVal := func(key string) string {
+		if v, ok := args[key]; ok {
+			if s, ok := v.(string); ok {
+				return s
+			}
+		}
+		return ""
+	}
+	return FeedbackToolEvent{
+		Text:             strVal("text"),
+		Context:          strVal("context"),
+		ExpectedBehavior: strVal("expected_behavior"),
+		SessionID:        strVal("session_id"),
+		UserID:           strVal("user_id"),
 	}
 }
 

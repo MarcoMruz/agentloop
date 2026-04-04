@@ -2,10 +2,12 @@ package meta
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/MarcoMruz/agentloop/internal/config"
 	"github.com/MarcoMruz/agentloop/internal/memory"
@@ -13,6 +15,17 @@ import (
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/metrics"
 	"github.com/MarcoMruz/agentloop/internal/pirun"
 )
+
+// UserFeedback captures explicit feedback from a user about incorrect or unexpected agent behavior.
+type UserFeedback struct {
+	// Text is the human-readable description of what went wrong.
+	Text string
+	// UserID identifies whose memory/skills should be updated.
+	UserID string
+	// SessionID optionally links the feedback to a specific past session.
+	// When non-empty, Evolve will try to load the real outcome for that session.
+	SessionID string
+}
 
 type MetaAgent struct {
 	mu           sync.Mutex
@@ -46,7 +59,9 @@ func NewMetaAgent(
 	}
 }
 
-func (m *MetaAgent) Evolve(ctx context.Context, outcome metrics.TaskOutcome) {
+// Evolve analyses the given outcome (and its cluster) and applies an evolution proposal.
+// An optional UserFeedback can be passed to incorporate explicit user-reported issues.
+func (m *MetaAgent) Evolve(ctx context.Context, outcome metrics.TaskOutcome, feedback ...UserFeedback) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -77,11 +92,17 @@ func (m *MetaAgent) Evolve(ctx context.Context, outcome metrics.TaskOutcome) {
 
 	agentsMDEvolved := m.readEvolvedSection()
 
+	var feedbackText string
+	if len(feedback) > 0 && feedback[0].Text != "" {
+		feedbackText = feedback[0].Text
+	}
+
 	prompt := BuildEvolutionPrompt(EvolutionPrompt{
 		SystemContext: DefaultSystemContext(),
 		Outcomes:      cluster,
 		CurrentConfig: currentConfig,
 		AgentsMD:      agentsMDEvolved,
+		UserFeedback:  feedbackText,
 		Constraints: []string{
 			"All skill names must be prefixed with 'evolved-'",
 			"AGENTS.md changes are limited to the EVOLVED section",
@@ -124,6 +145,46 @@ func (m *MetaAgent) Evolve(ctx context.Context, outcome metrics.TaskOutcome) {
 	slog.Info("evolution complete", "summary", proposal.Summary)
 }
 
+
+// EvolveFromFeedback triggers an evolution driven by explicit user feedback rather than
+// a metrics threshold breach. It attempts to load the real TaskOutcome for the referenced
+// session; if none is found it constructs a synthetic one so the meta-agent has context.
+func (m *MetaAgent) EvolveFromFeedback(ctx context.Context, fb UserFeedback) {
+	if fb.UserID == "" {
+		slog.Warn("EvolveFromFeedback: UserID is empty, skipping")
+		return
+	}
+
+	// Try to find the real outcome first.
+	var outcome metrics.TaskOutcome
+	found := false
+
+	if fb.SessionID != "" {
+		all, err := metrics.LoadOutcomes(m.vaultPath, fb.UserID, 90)
+		if err == nil {
+			for _, o := range all {
+				if o.SessionID == fb.SessionID {
+					outcome = o
+					found = true
+					break
+				}
+			}
+		}
+	}
+
+	if !found {
+		// Build a synthetic outcome that will anchor the cluster lookup.
+		outcome = metrics.TaskOutcome{
+			SessionID:   fmt.Sprintf("feedback-%d", time.Now().UnixMilli()),
+			UserID:      fb.UserID,
+			FinalStatus: "feedback",
+			Timestamp:   time.Now(),
+			Feedback:    fb.Text,
+		}
+	}
+
+	m.Evolve(ctx, outcome, fb)
+}
 
 func (m *MetaAgent) readEvolvedSection() string {
 	if m.agentsMDPath == "" {

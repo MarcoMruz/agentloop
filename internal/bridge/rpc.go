@@ -39,6 +39,7 @@ type PiBridge struct {
 	onMemoryTool    MemoryToolHandler
 	onSkillTool     SkillToolHandler
 	onFeedbackTool  FeedbackToolHandler
+	onScheduleTool  ScheduleToolHandler
 	done            chan struct{}
 	retrievePath  string // per-session temp file for Retrieve_memory results
 	skillLoadPath string // per-session temp file for Find_skill result
@@ -68,6 +69,9 @@ func (b *PiBridge) SetSkillToolHandler(h SkillToolHandler) { b.onSkillTool = h }
 
 // SetFeedbackToolHandler registers the callback for Submit_feedback tool interception.
 func (b *PiBridge) SetFeedbackToolHandler(h FeedbackToolHandler) { b.onFeedbackTool = h }
+
+// SetScheduleToolHandler registers the callback for Schedule_task tool interception.
+func (b *PiBridge) SetScheduleToolHandler(h ScheduleToolHandler) { b.onScheduleTool = h }
 
 // Start launches the pi subprocess in RPC mode.
 func (b *PiBridge) Start(ctx context.Context, workDir string) error {
@@ -274,6 +278,14 @@ func (b *PiBridge) readEvents() {
 			continue // Do NOT forward to onEvent
 		}
 
+		// Schedule tool interception: Schedule_task is handled by the Go side
+		if event.Type == "tool_execution_start" && event.ToolName == "Schedule_task" {
+			if b.onScheduleTool != nil {
+				b.onScheduleTool(scheduleToolEventFromArgs(event.Args))
+			}
+			continue // Do NOT forward to onEvent
+		}
+
 		// Dispatch to event handler
 		if b.onEvent != nil {
 			if err := b.onEvent(event); err != nil {
@@ -373,6 +385,25 @@ func feedbackToolEventFromArgs(args map[string]any) FeedbackToolEvent {
 		ExpectedBehavior: strVal("expected_behavior"),
 		SessionID:        strVal("session_id"),
 		UserID:           strVal("user_id"),
+	}
+}
+
+func scheduleToolEventFromArgs(args map[string]any) ScheduleToolEvent {
+	strVal := func(key string) string {
+		if v, ok := args[key]; ok {
+			if s, ok := v.(string); ok {
+				return s
+			}
+		}
+		return ""
+	}
+	return ScheduleToolEvent{
+		Name:        strVal("name"),
+		Schedule:    strVal("schedule"),
+		Description: strVal("description"),
+		Prompt:      strVal("prompt"),
+		SessionID:   strVal("session_id"),
+		UserID:      strVal("user_id"),
 	}
 }
 

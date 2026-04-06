@@ -12,6 +12,7 @@ import (
 	"github.com/MarcoMruz/agentloop/internal/agent"
 	"github.com/MarcoMruz/agentloop/internal/bridge"
 	"github.com/MarcoMruz/agentloop/internal/config"
+	"github.com/MarcoMruz/agentloop/internal/heartbeat/scheduled"
 	"github.com/MarcoMruz/agentloop/internal/memory"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/meta"
@@ -19,6 +20,7 @@ import (
 	"github.com/MarcoMruz/agentloop/internal/memory/notes"
 	"github.com/MarcoMruz/agentloop/internal/skills"
 	"github.com/MarcoMruz/agentloop/internal/vault"
+	"github.com/google/uuid"
 )
 
 type Broadcaster interface {
@@ -64,6 +66,7 @@ type Manager struct {
 	memory            *memory.Engine
 	skills            *skills.Registry
 	skillAgent        *skills.SkillAgent
+	taskStore         scheduled.TaskStore
 	collector         *metrics.Collector
 	pipeline          *evolve.PipelineHolder
 	metaAgent         *meta.MetaAgent
@@ -195,6 +198,11 @@ func (m *Manager) SubmitFeedback(fb metrics.UserFeedback) error {
 // SetSkillAgent sets the SkillAgent for LLM-driven skill selection.
 func (m *Manager) SetSkillAgent(sa *skills.SkillAgent) {
 	m.skillAgent = sa
+}
+
+// SetTaskStore sets the TaskStore for schedule persistence.
+func (m *Manager) SetTaskStore(ts scheduled.TaskStore) {
+	m.taskStore = ts
 }
 
 func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session, error) {
@@ -423,6 +431,31 @@ func (m *Manager) StartSession(ctx context.Context, req StartRequest) (*Session,
 					return
 				}
 				_ = os.WriteFile(ev.SkillLoadPath, data, 0600)
+			},
+			OnScheduleTool: func(ev bridge.ScheduleToolEvent) {
+				if m.taskStore == nil {
+					slog.Warn("OnScheduleTool: task store not configured")
+					return
+				}
+				userID := sess.UserID
+				if ev.UserID != "" {
+					userID = ev.UserID
+				}
+				task := scheduled.ScheduledTask{
+					ID:        uuid.New().String()[:8],
+					UserID:    userID,
+					Name:      ev.Name,
+					Schedule:  ev.Schedule,
+					Prompt:    ev.Prompt,
+					Enabled:   true,
+					CreatedAt: time.Now(),
+					NextRunAt: time.Now(),
+				}
+				if _, err := m.taskStore.Add(task); err != nil {
+					slog.Warn("OnScheduleTool: failed to add task", "err", err, "name", ev.Name)
+					return
+				}
+				slog.Info("task scheduled", "name", ev.Name, "userId", userID, "schedule", ev.Schedule)
 			},
 		})
 

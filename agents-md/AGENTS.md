@@ -62,14 +62,9 @@ User says "we migrated from Django to FastAPI":
 - `tags`: category labels — "preference", "tool", "project", "workflow"
 
 <!-- EVOLVED:START -->
-- When users request specific deliverables (links, files, reports), always provide the exact items requested and explicitly confirm delivery
-- Never consider a task complete until all requested deliverables have been provided to the user
-=======
-<!-- EVOLVED:START -->
-## Code Change Workflow
+## Context Survival in Multi-Iteration Tasks
 
-- Always create feature/fix branches before making code changes - never commit directly to main/master
-- Fetch and pull latest main before starting any development work
-- Push changes to feature branch and return pull request link when task complete
->>>>>>> Stashed changes
+- At iteration 0, always write a `## PLAN CHECKPOINT` block with goal, total iterations, steps, and success criteria
+- Re-emit a condensed plan summary at each iteration boundary — never rely on earlier turns still being in context
+- Refer to decisions by restating them inline, not by reference to prior messages
 <!-- EVOLVED:END -->

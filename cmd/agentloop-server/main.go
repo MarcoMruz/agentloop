@@ -10,6 +10,8 @@ import (
 	"syscall"
 
 	"github.com/MarcoMruz/agentloop/internal/config"
+	"github.com/MarcoMruz/agentloop/internal/heartbeat"
+	"github.com/MarcoMruz/agentloop/internal/heartbeat/scheduled"
 	"github.com/MarcoMruz/agentloop/internal/logging"
 	"github.com/MarcoMruz/agentloop/internal/memory"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve"
@@ -110,7 +112,17 @@ func main() {
 	skillAgent := skills.NewSkillAgent(skillPiCfg, cfg.Security)
 	sm.SetSkillAgent(skillAgent)
 
-	// MemEvolve: pipeline, collector, and meta-agent
+	// Initialize metrics collector (used by both MemEvolve and heartbeat scheduled tasks)
+	var collector *metrics.Collector
+	evolvedMetricsDir := filepath.Join(cfg.Vault.Path, "memory", "evolved")
+	collector = metrics.NewCollector(
+		evolvedMetricsDir,
+		cfg.Evolution.ScoreThreshold,
+		cfg.Evolution.MinCooldownSeconds,
+		cfg.Evolution.MaxDailyRuns,
+	)
+
+	// MemEvolve: pipeline and meta-agent
 	if cfg.Evolution.Enabled {
 		if err := evolve.EnsureEvolvedDirs(cfg.Vault.Path); err != nil {
 			slog.Warn("failed to create evolved dirs", "err", err)
@@ -130,14 +142,6 @@ func main() {
 
 			pipeline := evolve.NewPipelineHolder(cfg.Vault.Path, defaults, enc, stor, retr, mgr)
 			mem.SetPipeline(pipeline)
-
-			evolvedMetricsDir := filepath.Join(cfg.Vault.Path, "memory", "evolved")
-			collector := metrics.NewCollector(
-				evolvedMetricsDir,
-				cfg.Evolution.ScoreThreshold,
-				cfg.Evolution.MinCooldownSeconds,
-				cfg.Evolution.MaxDailyRuns,
-			)
 
 			agentsMDPath, _ := filepath.Abs("agents-md/AGENTS.md")
 			skillsPath := filepath.Join(cfg.Vault.Path, "skills")
@@ -164,8 +168,19 @@ func main() {
 		}
 	}
 
+	// Initialize task store for schedule management
+	tasksDir := filepath.Join(cfg.Vault.Path, "tasks")
+	taskStore, err := scheduled.NewSQLiteTaskStore(tasksDir)
+	if err != nil {
+		slog.Error("failed to initialize task store", "error", err)
+		os.Exit(1)
+	}
+	sm.SetTaskStore(taskStore)
+
 	// Initialize server
 	handler := server.NewHandler(sm, mem)
+	handler.SetTaskStore(taskStore)
+	handler.SetSkillRegistry(sk)
 	srv := server.New(expandHome(cfg.Server.SocketPath), handler)
 	handler.SetServer(srv)
 	sm.SetGlobalBroadcaster(srv)
@@ -174,9 +189,19 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// Setup heartbeat (optional; disabled if cfg.Heartbeat.Enabled = false)
+	var hb *heartbeat.Heartbeat
+	if hb, err = heartbeat.SetupHeartbeat(ctx, cfg.Heartbeat, mem, sm, v, cfg.Pi, cfg.Security, taskStore, collector); err != nil {
+		slog.Warn("heartbeat setup failed", "error", err)
+		// Continue anyway; heartbeat is optional for operation
+	}
+
 	go func() {
 		<-ctx.Done()
 		slog.Info("shutting down...")
+		if hb != nil {
+			hb.Stop()
+		}
 		sm.StopAll()
 		srv.Stop()
 	}()

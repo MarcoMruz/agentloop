@@ -43,11 +43,20 @@ type StartRequest struct {
 	// ComputeConversationContextID returns a stable key scoping memory to this thread.
 	ChannelID string
 	ThreadID  string
+	
+	// Optional: if set, used directly as conversation context ID (e.g., Slack thread timestamp).
+	// Takes precedence over ComputeConversationContextID().
+	ConversationContextID string
 }
 
 // ComputeConversationContextID returns a stable context key for memory scoping.
 // Returns empty string when not applicable (CLI, missing fields, etc.).
 func (r StartRequest) ComputeConversationContextID() string {
+	// If explicitly provided, use it directly
+	if r.ConversationContextID != "" {
+		return r.ConversationContextID
+	}
+	// Otherwise compute from ChannelID + ThreadID (for backward compatibility)
 	if r.ChannelID == "" || r.ThreadID == "" {
 		return ""
 	}

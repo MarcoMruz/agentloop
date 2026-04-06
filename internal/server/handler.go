@@ -28,12 +28,13 @@ func (h *Handler) Handle(ctx context.Context, client *Client, req JSONRPCRequest
 
 	case "task.start":
 		var p struct {
-			UserID   string `json:"userId"`
-			Text     string `json:"text"`
-			WorkDir  string `json:"workDir"`
-			Source   string `json:"source"`
-			ThreadID  string `json:"thread_id"`
-			ChannelID string `json:"channel_id"`
+			UserID                string `json:"userId"`
+			Text                  string `json:"text"`
+			WorkDir               string `json:"workDir"`
+			Source                string `json:"source"`
+			ThreadID              string `json:"thread_id"`
+			ChannelID             string `json:"channel_id"`
+			ConversationContextID string `json:"conversationContextId"`  // For Slack threads and other threaded conversations
 		}
 		json.Unmarshal(req.Params, &p)
 		if p.UserID == "" || p.Text == "" {
@@ -56,14 +57,15 @@ func (h *Handler) Handle(ctx context.Context, client *Client, req JSONRPCRequest
 		}
 
 		sess, err := h.sessions.StartSession(ctx, session.StartRequest{
-			UserID:       p.UserID,
-			Text:         p.Text,
-			WorkDir:      p.WorkDir,
-			Source:       p.Source,
-			ThreadID:     p.ThreadID,
-			ChannelID:    p.ChannelID,
-			Broadcaster:  h.server,
-			HITLNotifier: h.server,
+			UserID:                p.UserID,
+			Text:                  p.Text,
+			WorkDir:               p.WorkDir,
+			Source:                p.Source,
+			ThreadID:              p.ThreadID,
+			ChannelID:             p.ChannelID,
+			ConversationContextID: p.ConversationContextID,
+			Broadcaster:           h.server,
+			HITLNotifier:          h.server,
 		})
 		if err != nil {
 			return nil, &RPCError{Code: -32000, Message: err.Error()}

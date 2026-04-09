@@ -2,6 +2,7 @@ package pirun
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -28,6 +29,18 @@ func RunTextSession(
 		workDir = os.TempDir()
 	}
 
+	// Single-turn sessions must not load or persist pi session history.
+	// Without --no-session, pi loads the last session with the same promptID
+	// (e.g. "orchestrator") and either replays it or skips the LLM call entirely,
+	// returning an empty response.
+	//
+	// --thinking off: the user's global pi settings may have a default thinking
+	// level (e.g. "medium"). With extended thinking enabled, pi puts the JSON
+	// plan/verdict into the reasoning block (thinking_delta), not the text
+	// content — so the text response is empty and ParsePlan fails. Single-turn
+	// planner/judge/skill-agent sessions always need plain text output.
+	piCfg.ExtraArgs = append(append([]string{}, piCfg.ExtraArgs...), "--no-session", "--thinking", "off")
+
 	b := bridge.New(piCfg, secCfg, config.HITLConfig{})
 
 	var response strings.Builder
@@ -38,11 +51,25 @@ func RunTextSession(
 	var once sync.Once
 	closeDone := func() { once.Do(func() { close(doneCh) }) }
 
+	var apiError string
 	b.SetEventHandler(func(event bridge.RPCEvent) error {
 		switch event.Type {
 		case "message_update":
 			if event.AssistantMessageEvent != nil && event.AssistantMessageEvent.Type == "text_delta" {
 				response.WriteString(event.AssistantMessageEvent.Delta)
+			}
+		case "message_end":
+			// Extract API errors from the message envelope (e.g. quota exceeded,
+			// auth failures). The "message" JSON field contains {stopReason, errorMessage, ...}.
+			if len(event.UIMessage) > 0 {
+				var msg struct {
+					StopReason   string `json:"stopReason"`
+					ErrorMessage string `json:"errorMessage"`
+				}
+				if json.Unmarshal(event.UIMessage, &msg) == nil && msg.ErrorMessage != "" {
+					apiError = msg.ErrorMessage
+					slog.Error("RunTextSession API error", "promptID", promptID, "stopReason", msg.StopReason, "error", msg.ErrorMessage)
+				}
 			}
 		case "agent_end":
 			closeDone()
@@ -78,6 +105,15 @@ func RunTextSession(
 	case <-b.Done(): // pi process exited unexpectedly
 	case <-ctx.Done():
 		return response.String(), ctx.Err()
+	}
+
+	// Surface API errors (quota, auth, invalid request) that pi reports
+	// inside message_end events rather than as process failures.
+	if apiError != "" && response.Len() == 0 {
+		return "", fmt.Errorf("pi API error: %s", apiError)
+	}
+	if response.Len() == 0 {
+		return "", fmt.Errorf("pi returned empty response (no text_delta events received)")
 	}
 	return response.String(), nil
 }

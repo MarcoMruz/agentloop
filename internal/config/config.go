@@ -365,20 +365,16 @@ func Defaults() *Config {
 		},
 		Orchestrator: OrchestratorConfig{
 			Planner: PiConfig{
-				Binary:   "pi",
-				Provider: "anthropic",
+				// Binary and Provider are intentionally empty so NewManager inherits
+				// them from cfg.Pi — ensuring the same auth/binary as the main agent.
 				Model:    "claude-opus-4-6",
 				NoSkills: true,
 			},
 			Worker: PiConfig{
-				Binary:   "pi",
-				Provider: "anthropic",
 				Model:    "claude-sonnet-4-6",
 				NoSkills: true,
 			},
 			Judge: PiConfig{
-				Binary:   "pi",
-				Provider: "anthropic",
 				Model:    "claude-opus-4-6",
 				NoSkills: true,
 			},

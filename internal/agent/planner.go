@@ -1,6 +1,9 @@
 package agent
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Plan describes the orchestration plan produced by the Planner.
 type Plan struct {
@@ -40,12 +43,21 @@ func ParsePlan(text string) (*Plan, error) {
 		}
 	}
 	if start == -1 || end == -1 {
-		return nil, &json.SyntaxError{}
+		// Provide helpful error message showing what was actually received
+		if len(text) == 0 {
+			return nil, fmt.Errorf("planner returned empty response")
+		}
+		// Truncate long responses for readability
+		preview := text
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		return nil, fmt.Errorf("planner response missing JSON object: %q", preview)
 	}
 
 	var plan Plan
 	if err := json.Unmarshal([]byte(text[start:end]), &plan); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse plan JSON: %w", err)
 	}
 	return &plan, nil
 }

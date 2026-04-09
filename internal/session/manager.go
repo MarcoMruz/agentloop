@@ -86,7 +86,21 @@ func NewManager(cfg *config.Config, v *vault.Vault, mem *memory.Engine, sk *skil
 	piCfg := cfg.Pi
 	piCfg.VaultPath = v.Path() // inject vault path so extensions can discover vault skills
 	orchCfg := cfg.Orchestrator
-	orchCfg.Worker.VaultPath = v.Path()
+	// Inherit binary, provider, and extensions dir from main pi config for any
+	// orchestrator sub-agent that hasn't been explicitly configured. This ensures
+	// that the planner/worker/judge use the same auth mechanism as the main agent.
+	for _, sub := range []*config.PiConfig{&orchCfg.Planner, &orchCfg.Worker, &orchCfg.Judge} {
+		if sub.Binary == "" {
+			sub.Binary = piCfg.Binary
+		}
+		if sub.Provider == "" {
+			sub.Provider = piCfg.Provider
+		}
+		if sub.ExtensionsDir == "" {
+			sub.ExtensionsDir = piCfg.ExtensionsDir
+		}
+		sub.VaultPath = v.Path()
+	}
 	return &Manager{
 		cfg:      cfg.Sessions,
 		piCfg:    piCfg,

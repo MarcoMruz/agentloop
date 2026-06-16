@@ -54,6 +54,7 @@ type Callbacks struct {
 	OnMemoryTool    bridge.MemoryToolHandler
 	OnSkillTool     bridge.SkillToolHandler
 	OnFeedbackTool  bridge.FeedbackToolHandler
+	OnScheduleTool  bridge.ScheduleToolHandler
 }
 
 // SessionInterface is the subset of Session needed by the agent core.
@@ -384,6 +385,10 @@ func (c *Core) Run(ctx context.Context, userId string, task string, workDir stri
 
 	if c.cb.OnFeedbackTool != nil {
 		b.SetFeedbackToolHandler(c.cb.OnFeedbackTool)
+	}
+
+	if c.cb.OnScheduleTool != nil {
+		b.SetScheduleToolHandler(c.cb.OnScheduleTool)
 	}
 
 	// Start pi

@@ -3,22 +3,38 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/MarcoMruz/agentloop/internal/heartbeat/scheduled"
 	"github.com/MarcoMruz/agentloop/internal/memory"
 	"github.com/MarcoMruz/agentloop/internal/memory/evolve/metrics"
 	"github.com/MarcoMruz/agentloop/internal/session"
+	"github.com/MarcoMruz/agentloop/internal/skills"
 )
 
 type Handler struct {
-	sessions *session.Manager
-	memory   *memory.Engine
-	server   *Server // back-reference for broadcasting
+	sessions  *session.Manager
+	memory    *memory.Engine
+	server    *Server // back-reference for broadcasting
+	taskStore scheduled.TaskStore
+	skills    *skills.Registry
 }
 
 func NewHandler(sm *session.Manager, mem *memory.Engine) *Handler {
 	return &Handler{sessions: sm, memory: mem}
+}
+
+// SetTaskStore sets the task store for schedule operations.
+func (h *Handler) SetTaskStore(ts scheduled.TaskStore) {
+	h.taskStore = ts
+}
+
+// SetSkillRegistry sets the skills registry for skill injection.
+func (h *Handler) SetSkillRegistry(sk *skills.Registry) {
+	h.skills = sk
 }
 
 func (h *Handler) SetServer(s *Server) { h.server = s }
@@ -54,6 +70,13 @@ func (h *Handler) Handle(ctx context.Context, client *Client, req JSONRPCRequest
 				return nil, &RPCError{Code: -32000, Message: err.Error()}
 			}
 			return map[string]any{"ok": true, "routed": "feedback"}, nil
+		}
+
+		// Convention-based schedule routing: Slack bridges (and other clients) that
+		// always send task.start can prefix their message with "schedule:" or "/schedule "
+		// to route to schedule.request logic instead of starting a new general agent session.
+		if scheduleText, ok := extractSchedulePrefix(p.Text); ok {
+			return h.handleScheduleRequest(ctx, client, p.UserID, p.WorkDir, p.Source, scheduleText)
 		}
 
 		sess, err := h.sessions.StartSession(ctx, session.StartRequest{
@@ -172,6 +195,40 @@ func (h *Handler) Handle(ctx context.Context, client *Client, req JSONRPCRequest
 		}
 		return map[string]any{"ok": true}, nil
 
+	case "schedule.list":
+		var p struct {
+			UserID string `json:"userId"`
+		}
+		json.Unmarshal(req.Params, &p)
+		if p.UserID == "" {
+			return nil, &RPCError{Code: -32602, Message: "userId required"}
+		}
+		if h.taskStore == nil {
+			return nil, &RPCError{Code: -32000, Message: "schedule service not available"}
+		}
+		tasks, err := h.taskStore.List(p.UserID)
+		if err != nil {
+			return nil, &RPCError{Code: -32000, Message: err.Error()}
+		}
+		return map[string]any{"tasks": tasks}, nil
+
+	case "schedule.delete":
+		var p struct {
+			UserID string `json:"userId"`
+			TaskID string `json:"taskId"`
+		}
+		json.Unmarshal(req.Params, &p)
+		if p.UserID == "" || p.TaskID == "" {
+			return nil, &RPCError{Code: -32602, Message: "userId and taskId required"}
+		}
+		if h.taskStore == nil {
+			return nil, &RPCError{Code: -32000, Message: "schedule service not available"}
+		}
+		if err := h.taskStore.Delete(p.TaskID); err != nil {
+			return nil, &RPCError{Code: -32000, Message: err.Error()}
+		}
+		return map[string]any{"ok": true}, nil
+
 	case "health.check":
 		return map[string]any{
 			"status":         "ok",
@@ -205,4 +262,64 @@ func extractFeedbackPrefix(s string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// extractSchedulePrefix checks whether s begins with a schedule prefix
+// ("schedule:" or "/schedule ") in a case-insensitive manner.
+// If matched, it returns the stripped, trimmed schedule request text and true.
+// Supported prefixes:
+//   - "schedule: some text"   → "some text"
+//   - "schedule:some text"    → "some text"
+//   - "/schedule some text"   → "some text"
+func extractSchedulePrefix(s string) (string, bool) {
+	trimmed := strings.TrimSpace(s)
+	lower := strings.ToLower(trimmed)
+
+	const colonPrefix = "schedule:"
+	const slashPrefix = "/schedule "
+
+	switch {
+	case strings.HasPrefix(lower, colonPrefix):
+		return strings.TrimSpace(trimmed[len(colonPrefix):]), true
+	case strings.HasPrefix(lower, slashPrefix):
+		return strings.TrimSpace(trimmed[len(slashPrefix):]), true
+	default:
+		return "", false
+	}
+}
+
+// handleScheduleRequest routes a schedule request to an agent session with the
+// schedule-task skill pre-loaded. The agent will interact with the user to gather
+// scheduling details and will call the Schedule_task tool to persist the task.
+func (h *Handler) handleScheduleRequest(ctx context.Context, client *Client, userID string, workDir string, source string, scheduleText string) (any, *RPCError) {
+	if h.skills == nil {
+		return nil, &RPCError{Code: -32000, Message: "skills registry not available"}
+	}
+
+	// Load the schedule-task skill
+	skill, err := h.skills.Get("schedule-task")
+	if err != nil {
+		slog.Warn("schedule-task skill not found", "err", err)
+		return nil, &RPCError{Code: -32000, Message: "schedule-task skill not found"}
+	}
+
+	// Inject skill instructions into the task text
+	skillPrefix := fmt.Sprintf("You must use the schedule-task skill to guide the user.\n\nSchedule-Task Skill Instructions:\n%s\n\n---\n\n", skill.Instructions)
+	taskWithSkill := skillPrefix + scheduleText
+
+	// Start a normal agent session with the skill-injected task
+	sess, err := h.sessions.StartSession(ctx, session.StartRequest{
+		UserID:       userID,
+		Text:         taskWithSkill,
+		WorkDir:      workDir,
+		Source:       source,
+		Broadcaster:  h.server,
+		HITLNotifier: h.server,
+	})
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+
+	client.Subscribe(sess.ID)
+	return map[string]any{"sessionId": sess.ID, "status": "started", "routed": "schedule"}, nil
 }

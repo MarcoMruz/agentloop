@@ -1,5 +1,7 @@
 package config
 
+import "time"
+
 type Config struct {
 	Server       ServerConfig       `mapstructure:"server"`
 	Pi           PiConfig           `mapstructure:"pi"`
@@ -12,6 +14,7 @@ type Config struct {
 	Logging      LoggingConfig      `mapstructure:"logging"`
 	Evolution    EvolutionConfig    `mapstructure:"evolution"`
 	Orchestrator OrchestratorConfig `mapstructure:"orchestrator"`
+	Heartbeat    HeartbeatConfig    `mapstructure:"heartbeat"`
 }
 
 type ServerConfig struct {
@@ -150,6 +153,18 @@ type OrchestratorConfig struct {
 	WorkerPoolSize   int      `mapstructure:"worker_pool_size"`
 	MaxIterations    int      `mapstructure:"max_iterations"`
 	SummaryMaxTokens int      `mapstructure:"summary_max_tokens"`
+}
+
+type HeartbeatConfig struct {
+	Enabled                        bool          `mapstructure:"enabled"`
+	Interval                       time.Duration `mapstructure:"interval"`
+	ConsolidationEnabled           bool          `mapstructure:"consolidation_enabled"`
+	ConsolidationInterval          time.Duration `mapstructure:"consolidation_interval"`
+	ConsolidationIdleThreshold     time.Duration `mapstructure:"consolidation_idle_threshold"`
+	MaxConsolidationDuration       time.Duration `mapstructure:"max_consolidation_duration"`
+	MemoryTools                    []string      `mapstructure:"memory_tools"`
+	Path                           string        `mapstructure:"-"`
+	MaxConcurrentScheduled         int           `mapstructure:"max_concurrent_scheduled"`
 }
 
 func Defaults() *Config {
@@ -381,6 +396,17 @@ func Defaults() *Config {
 			WorkerPoolSize:   4,
 			MaxIterations:    3,
 			SummaryMaxTokens: 1500,
+		},
+		Heartbeat: HeartbeatConfig{
+			Enabled:                        true,
+			Interval:                       30 * time.Second,
+			ConsolidationEnabled:           true,
+			ConsolidationInterval:          5 * time.Minute,
+			ConsolidationIdleThreshold:     1 * time.Minute,
+			MaxConsolidationDuration:       10 * time.Minute,
+			MemoryTools:                    []string{"Add_memory", "Update_memory", "Retrieve_memory"},
+			Path:                           "~/.local/share/agentloop/vault/heartbeat.md",
+			MaxConcurrentScheduled:         1,
 		},
 	}
 }

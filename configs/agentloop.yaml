@@ -300,7 +300,7 @@ orchestrator:
     provider: anthropic
     model: claude-sonnet-4-6
   worker_pool_size: 4
-  max_iterations: 3
+  max_iterations: 10
   summary_max_tokens: 1500
 
 skills:

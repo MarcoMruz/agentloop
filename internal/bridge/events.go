@@ -94,6 +94,20 @@ type FeedbackToolEvent struct {
 // FeedbackToolHandler is called synchronously when Submit_feedback is intercepted.
 type FeedbackToolHandler func(event FeedbackToolEvent)
 
+// ScheduleToolEvent is constructed when the bridge intercepts a tool_execution_start
+// for the Schedule_task tool.
+type ScheduleToolEvent struct {
+	Name        string
+	Schedule    string
+	Description string
+	Prompt      string
+	SessionID   string
+	UserID      string
+}
+
+// ScheduleToolHandler is called synchronously when Schedule_task is intercepted.
+type ScheduleToolHandler func(event ScheduleToolEvent)
+
 // ExtensionUIResponse is sent back to pi when a dialog extension_ui_request needs a reply.
 // UIMessageString extracts UIMessage as a plain string.
 // For extension_ui_request events the field is a JSON-encoded string; for
